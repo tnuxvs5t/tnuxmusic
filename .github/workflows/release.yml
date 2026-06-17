@@ -95,7 +95,8 @@ jobs:
       - name: Deploy Qt runtime
         shell: pwsh
         run: >
-          & "${{ steps.qt.outputs.qt-path }}\bin\windeployqt.exe"
+          $windeployqt = Join-Path $env:QT_ROOT_DIR 'bin\windeployqt.exe';
+          & $windeployqt
           --release --compiler-runtime
           --qmldir "${{ github.workspace }}\qml"
           --dir stage\bin
