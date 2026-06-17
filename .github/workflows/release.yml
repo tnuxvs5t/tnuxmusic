@@ -24,11 +24,11 @@ jobs:
         id: qt
         uses: jurplel/install-qt-action@v4
         with:
-          version: 6.11.1
+          version: 6.8.3
           host: linux
           target: desktop
           arch: gcc_64
-          modules: qtmultimedia qtquickcontrols2
+          modules: qtmultimedia
 
       - name: Configure
         run: >
@@ -60,17 +60,20 @@ jobs:
         id: qt
         uses: jurplel/install-qt-action@v4
         with:
-          version: 6.11.1
+          version: 6.8.3
           host: windows
           target: desktop
           arch: win64_msvc2022_64
-          modules: qtmultimedia qtquickcontrols2
+          modules: qtmultimedia
 
       - name: Install Windows packaging deps
         shell: pwsh
         run: |
           choco install ninja innosetup -y
           vcpkg install openssl:x64-windows
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
 
       - name: Configure
         shell: pwsh
