@@ -11,11 +11,14 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QHash>
 #include <QRegularExpression>
 #include <QSet>
 #include <QStandardPaths>
 #include <QTextStream>
 #include <algorithm>
+#include <array>
+#include <limits>
 
 static const QSet<QString> kAudioExt = {
     "mp3", "flac", "wav", "m4a", "aac", "ogg", "opus", "wma", "aiff", "alac"
@@ -42,6 +45,16 @@ struct AlbumSidecar {
     int year = 0;
     QJsonObject track;
 };
+
+struct ZipEntryInfo {
+    QString name;
+    quint32 crc = 0;
+    quint32 size = 0;
+    quint32 localHeaderOffset = 0;
+};
+
+constexpr quint16 kZipDosTime = 0;
+constexpr quint16 kZipDosDate = (1 << 5) | 1; // 1980-01-01
 
 #ifndef TNUXMUSIC_SOURCE_DIR
 #define TNUXMUSIC_SOURCE_DIR ""
@@ -70,6 +83,242 @@ static int intValue(const QJsonObject &obj, const QString &key, int fallback = 0
     bool ok = false;
     const int x = v.toString().toInt(&ok);
     return ok ? x : fallback;
+}
+
+static quint32 crc32Bytes(const QByteArray &data, quint32 crc = 0xffffffffu)
+{
+    static const std::array<quint32, 256> table = [] {
+        std::array<quint32, 256> t {};
+        for (quint32 i = 0; i < 256; ++i) {
+            quint32 c = i;
+            for (int j = 0; j < 8; ++j)
+                c = (c & 1) ? (0xedb88320u ^ (c >> 1)) : (c >> 1);
+            t[i] = c;
+        }
+        return t;
+    }();
+
+    for (uchar b : data)
+        crc = table[(crc ^ b) & 0xff] ^ (crc >> 8);
+    return crc;
+}
+
+static void writeLe16(QFile &file, quint16 value)
+{
+    char bytes[2] = {
+        char(value & 0xff),
+        char((value >> 8) & 0xff),
+    };
+    file.write(bytes, 2);
+}
+
+static void writeLe32(QFile &file, quint32 value)
+{
+    char bytes[4] = {
+        char(value & 0xff),
+        char((value >> 8) & 0xff),
+        char((value >> 16) & 0xff),
+        char((value >> 24) & 0xff),
+    };
+    file.write(bytes, 4);
+}
+
+static QString zipSafeName(QString name)
+{
+    name.replace('\\', '/');
+    while (name.startsWith('/'))
+        name.remove(0, 1);
+    const QStringList parts = name.split('/', Qt::SkipEmptyParts);
+    QStringList safe;
+    safe.reserve(parts.size());
+    for (QString part : parts) {
+        part = part.trimmed();
+        if (part.isEmpty() || part == "." || part == "..")
+            continue;
+        part.replace(QRegularExpression(R"([<>:"|?*\x00-\x1f])"), "_");
+        safe << part;
+    }
+    return safe.join('/');
+}
+
+static QString uniqueZipName(const QString &preferred, QSet<QString> *used)
+{
+    QString name = zipSafeName(preferred);
+    if (name.isEmpty())
+        name = QStringLiteral("file");
+
+    const QFileInfo info(name);
+    const QString dir = info.path() == "." ? QString() : info.path() + "/";
+    const QString stem = info.completeBaseName();
+    const QString suffix = info.suffix();
+
+    QString candidate = name;
+    int n = 2;
+    while (used->contains(candidate)) {
+        candidate = dir + stem + QStringLiteral("-%1").arg(n++);
+        if (!suffix.isEmpty())
+            candidate += "." + suffix;
+    }
+    used->insert(candidate);
+    return candidate;
+}
+
+static bool addZipEntry(QFile &zip, const QString &entryName, const QByteArray &data, QVector<ZipEntryInfo> *entries)
+{
+    const QByteArray nameUtf8 = entryName.toUtf8();
+    if (nameUtf8.isEmpty() || nameUtf8.size() > 65535 || data.size() > std::numeric_limits<quint32>::max()
+        || zip.pos() > std::numeric_limits<quint32>::max()) {
+        return false;
+    }
+
+    const quint32 crc = ~crc32Bytes(data);
+    const quint32 size = quint32(data.size());
+    const quint32 offset = quint32(zip.pos());
+
+    writeLe32(zip, 0x04034b50);
+    writeLe16(zip, 20);
+    writeLe16(zip, 0x0800); // UTF-8 file names.
+    writeLe16(zip, 0);      // stored
+    writeLe16(zip, kZipDosTime);
+    writeLe16(zip, kZipDosDate);
+    writeLe32(zip, crc);
+    writeLe32(zip, size);
+    writeLe32(zip, size);
+    writeLe16(zip, quint16(nameUtf8.size()));
+    writeLe16(zip, 0);
+    zip.write(nameUtf8);
+    zip.write(data);
+
+    entries->push_back({entryName, crc, size, offset});
+    return zip.error() == QFile::NoError;
+}
+
+static bool addZipFile(QFile &zip,
+                       const QString &sourcePath,
+                       const QString &entryName,
+                       QVector<ZipEntryInfo> *entries,
+                       QString *error)
+{
+    QFile in(sourcePath);
+    if (!in.open(QIODevice::ReadOnly)) {
+        if (error)
+            *error = QStringLiteral("无法读取本地化资源：%1").arg(sourcePath);
+        return false;
+    }
+
+    if (in.size() < 0 || in.size() > std::numeric_limits<quint32>::max()
+        || zip.pos() > std::numeric_limits<quint32>::max()) {
+        if (error)
+            *error = QStringLiteral("资源过大，当前导出器不支持 ZIP64：%1").arg(sourcePath);
+        return false;
+    }
+
+    quint32 crcState = 0xffffffffu;
+    while (!in.atEnd()) {
+        const QByteArray chunk = in.read(128 * 1024);
+        if (chunk.isEmpty() && in.error() != QFile::NoError) {
+            if (error)
+                *error = QStringLiteral("读取本地化资源失败：%1").arg(sourcePath);
+            return false;
+        }
+        crcState = crc32Bytes(chunk, crcState);
+    }
+
+    if (!in.seek(0)) {
+        if (error)
+            *error = QStringLiteral("无法重读本地化资源：%1").arg(sourcePath);
+        return false;
+    }
+
+    const QByteArray nameUtf8 = entryName.toUtf8();
+    if (nameUtf8.isEmpty() || nameUtf8.size() > 65535) {
+        if (error)
+            *error = QStringLiteral("无法写入 ZIP 条目：%1").arg(entryName);
+        return false;
+    }
+
+    const quint32 crc = ~crcState;
+    const quint32 size = quint32(in.size());
+    const quint32 offset = quint32(zip.pos());
+
+    writeLe32(zip, 0x04034b50);
+    writeLe16(zip, 20);
+    writeLe16(zip, 0x0800);
+    writeLe16(zip, 0);
+    writeLe16(zip, kZipDosTime);
+    writeLe16(zip, kZipDosDate);
+    writeLe32(zip, crc);
+    writeLe32(zip, size);
+    writeLe32(zip, size);
+    writeLe16(zip, quint16(nameUtf8.size()));
+    writeLe16(zip, 0);
+    zip.write(nameUtf8);
+
+    while (!in.atEnd()) {
+        const QByteArray chunk = in.read(128 * 1024);
+        if (chunk.isEmpty() && in.error() != QFile::NoError) {
+            if (error)
+                *error = QStringLiteral("读取本地化资源失败：%1").arg(sourcePath);
+            return false;
+        }
+        if (zip.write(chunk) != chunk.size()) {
+            if (error)
+                *error = QStringLiteral("无法写入 ZIP 条目：%1").arg(entryName);
+            return false;
+        }
+    }
+
+    entries->push_back({entryName, crc, size, offset});
+    return true;
+}
+
+static bool finishZip(QFile &zip, const QVector<ZipEntryInfo> &entries, QString *error)
+{
+    if (zip.pos() > std::numeric_limits<quint32>::max()) {
+        if (error)
+            *error = QStringLiteral("ZIP 超过 4GiB，当前导出器不支持 ZIP64");
+        return false;
+    }
+    const quint32 centralOffset = quint32(zip.pos());
+
+    for (const ZipEntryInfo &entry : entries) {
+        const QByteArray nameUtf8 = entry.name.toUtf8();
+        writeLe32(zip, 0x02014b50);
+        writeLe16(zip, 20);
+        writeLe16(zip, 20);
+        writeLe16(zip, 0x0800);
+        writeLe16(zip, 0);
+        writeLe16(zip, kZipDosTime);
+        writeLe16(zip, kZipDosDate);
+        writeLe32(zip, entry.crc);
+        writeLe32(zip, entry.size);
+        writeLe32(zip, entry.size);
+        writeLe16(zip, quint16(nameUtf8.size()));
+        writeLe16(zip, 0);
+        writeLe16(zip, 0);
+        writeLe16(zip, 0);
+        writeLe16(zip, 0);
+        writeLe32(zip, 0);
+        writeLe32(zip, entry.localHeaderOffset);
+        zip.write(nameUtf8);
+    }
+
+    if (zip.pos() > std::numeric_limits<quint32>::max() || entries.size() > 65535) {
+        if (error)
+            *error = QStringLiteral("ZIP 条目过多或过大，当前导出器不支持 ZIP64");
+        return false;
+    }
+
+    const quint32 centralSize = quint32(zip.pos()) - centralOffset;
+    writeLe32(zip, 0x06054b50);
+    writeLe16(zip, 0);
+    writeLe16(zip, 0);
+    writeLe16(zip, quint16(entries.size()));
+    writeLe16(zip, quint16(entries.size()));
+    writeLe32(zip, centralSize);
+    writeLe32(zip, centralOffset);
+    writeLe16(zip, 0);
+    return zip.error() == QFile::NoError;
 }
 
 static QString qualityLabelFor(const QFileInfo &info)
@@ -300,6 +549,10 @@ static QString findSidecar(const QFileInfo &audio, const QStringList &suffixes, 
         const QString sameStem = dir.filePath(stem + "." + ext);
         if (QFileInfo::exists(sameStem))
             return canonicalLocalPath(sameStem);
+
+        const QString sameStemCover = dir.filePath(stem + ".cover." + ext);
+        if (QFileInfo::exists(sameStemCover))
+            return canonicalLocalPath(sameStemCover);
     }
 
     for (const QString &base : baseNames) {
@@ -610,6 +863,130 @@ QString LibraryManager::exportLibrary(const QString &fileUrl) const
     if (!writeJsonFile(path, toJsonObject(), &error))
         return error;
     return QStringLiteral("已导出曲库：%1").arg(path);
+}
+
+QString LibraryManager::exportLocalizedZip(const QString &fileUrl) const
+{
+    const QString path = canonicalLocalPath(fileUrl);
+    const QFileInfo zipInfo(path);
+    if (!zipInfo.absoluteDir().exists())
+        QDir().mkpath(zipInfo.absolutePath());
+
+    QFile zip(path);
+    if (!zip.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return QStringLiteral("无法写入本地化 ZIP：%1").arg(path);
+
+    QVector<ZipEntryInfo> entries;
+    QSet<QString> usedZipNames;
+    QHash<QString, QString> sourceToZipName;
+    QJsonArray tracksJson;
+    int copiedFiles = 0;
+    int skippedFiles = 0;
+
+    auto localizePath = [&](const QString &sourcePath, const QString &preferredName, QString *error) -> QString {
+        const QString source = canonicalLocalPath(sourcePath);
+        if (source.trimmed().isEmpty())
+            return {};
+        if (sourceToZipName.contains(source))
+            return sourceToZipName.value(source);
+
+        const QFileInfo sourceInfo(source);
+        if (!sourceInfo.exists() || !sourceInfo.isFile())
+            return {};
+
+        const QString zipName = uniqueZipName(preferredName, &usedZipNames);
+        if (!addZipFile(zip, source, zipName, &entries, error))
+            return {};
+
+        sourceToZipName.insert(source, zipName);
+        ++copiedFiles;
+        return zipName;
+    };
+
+    for (const Track &track : m_tracks) {
+        Track localized = track;
+
+        const QString artist = track.artist.trimmed().isEmpty() ? QStringLiteral("Unknown Artist") : track.artist.trimmed();
+        const QString album = track.album.trimmed().isEmpty() ? QStringLiteral("Unknown Album") : track.album.trimmed();
+        const QString title = track.displayTitle().trimmed().isEmpty() ? QStringLiteral("Untitled") : track.displayTitle().trimmed();
+        const QString base = zipSafeName(QStringLiteral("music/%1/%2/%3").arg(artist, album, title));
+
+        QString error;
+        QVector<TrackQuality> localizedQualities;
+        localizedQualities.reserve(localized.qualities.size());
+        for (TrackQuality &quality : localized.qualities) {
+            const QFileInfo qualityInfo(quality.path);
+            const QString ext = qualityInfo.suffix().isEmpty() ? quality.codec.toLower() : qualityInfo.suffix();
+            const QString preferred = base + (ext.isEmpty() ? QString() : "." + ext);
+            const QString zipName = localizePath(quality.path, preferred, &error);
+            if (zipName.isEmpty() && !error.isEmpty()) {
+                zip.close();
+                return error;
+            }
+            if (zipName.isEmpty()) {
+                ++skippedFiles;
+                continue;
+            }
+            quality.path = zipName;
+            localizedQualities.push_back(quality);
+        }
+        localized.qualities = localizedQualities;
+
+        if (!track.coverPath.trimmed().isEmpty()) {
+            const QFileInfo cInfo(track.coverPath);
+            const QString preferred = base + QStringLiteral(".cover") + (cInfo.suffix().isEmpty() ? QString() : "." + cInfo.suffix());
+            const QString zipName = localizePath(track.coverPath, preferred, &error);
+            if (zipName.isEmpty() && !error.isEmpty()) {
+                zip.close();
+                return error;
+            }
+            if (zipName.isEmpty())
+                ++skippedFiles;
+            else
+                localized.coverPath = zipName;
+        }
+
+        if (!track.lyricPath.trimmed().isEmpty()) {
+            const QFileInfo lInfo(track.lyricPath);
+            const QString preferred = base + QStringLiteral(".") + (lInfo.suffix().isEmpty() ? QStringLiteral("tly") : lInfo.suffix());
+            const QString zipName = localizePath(track.lyricPath, preferred, &error);
+            if (zipName.isEmpty() && !error.isEmpty()) {
+                zip.close();
+                return error;
+            }
+            if (zipName.isEmpty())
+                ++skippedFiles;
+            else
+                localized.lyricPath = zipName;
+        }
+
+        if (!localized.qualities.isEmpty())
+            tracksJson.append(localized.toJson());
+    }
+
+    QJsonObject root;
+    root["schema"] = QStringLiteral("tnuxmusic.localized-library.v1");
+    root["app"] = QStringLiteral("tnuxmusic");
+    root["version"] = 1;
+    root["tracks"] = tracksJson;
+
+    if (!addZipEntry(zip, QStringLiteral("library.json"), QJsonDocument(root).toJson(QJsonDocument::Indented), &entries)) {
+        zip.close();
+        return QStringLiteral("无法写入 ZIP 曲库索引：%1").arg(path);
+    }
+
+    QString error;
+    if (!finishZip(zip, entries, &error)) {
+        zip.close();
+        return error.isEmpty() ? QStringLiteral("无法完成 ZIP：%1").arg(path) : error;
+    }
+    zip.close();
+
+    return QStringLiteral("已本地化导出 ZIP：%1（%2 首，%3 个资源文件，跳过 %4 个缺失资源）")
+        .arg(path)
+        .arg(tracksJson.size())
+        .arg(copiedFiles)
+        .arg(skippedFiles);
 }
 
 QString LibraryManager::removeAlbum(const QString &artist, const QString &album)

@@ -15,6 +15,7 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS
     Multimedia
     Qml
 )
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
@@ -58,6 +59,7 @@ target_link_libraries(tnuxmusic PRIVATE
     Qt6::QuickControls2
     Qt6::Multimedia
     Qt6::Qml
+    OpenSSL::Crypto
 )
 
 target_compile_definitions(tnuxmusic PRIVATE

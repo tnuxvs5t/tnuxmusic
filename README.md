@@ -7,6 +7,7 @@
 - Qt 6.11.1 / Qt Quick Controls 2：界面；
 - Qt Multimedia：本地播放器；
 - C++23：曲库、播放、歌词、脚本桥；
+- OpenSSL libcrypto：NCM AES 解密；
 - QJSEngine：用 JavaScript 整理专辑和动态管理曲库；
 - `.tly`：自定义动态歌词格式，支持时间轴、滚动、翻译和标签。
 
@@ -19,6 +20,7 @@
 - 自动关联同目录 `cover/folder/front/album/artwork` 封面；
 - 一首歌可挂多个音质；
 - 曲库 JSON 导入、导出、合并；
+- 当前曲库本地化导出为标准 ZIP（含 `library.json`、音频、封面、歌词）；
 - JS 曲库整理脚本；
 - 播放、暂停、进度、音量；
 - `.tly` 动态歌词滚动和翻译显示。
@@ -29,7 +31,7 @@
 - MP3 ID3v2 / FLAC Vorbis Comment 基础 tag 读取；
 - `.tly` 逐字时间轴高亮。
 - 扫描音乐时自动把同名 `.lrc` 转成 `.tly`；
-- 扫描时识别 `.ncm`，并预留可插拔处理接口。
+- 扫描时识别并解密 `.ncm`，自动生成普通音频文件和内嵌封面后纳入曲库。
 
 ## 构建
 
@@ -99,18 +101,27 @@ node scripts/lrc_to_tly.js "/path/to/song.mp3" --translation-json "/path/to/song
 - 优先使用同名 `.tly`；
 - 如果没有 `.tly` 但有同名 `.lrc`，自动生成 `.tly`；
 - 如果旁边存在同名 `.zh-CN.json` 翻译数组，也会写入 `tr=zh-CN` 行；
-- 发现 `.ncm` 会调用预留处理接口；
-- 默认接口为空实现，只统计为“未处理”；
-- 如果你实现接口并返回普通音频路径，扫描器会继续把输出音频纳入曲库。
+- 发现 `.ncm` 会调用内置转换器；
+- 转换器会在 `.ncm` 同目录生成同名 `.mp3` / `.flac` / `.m4a` 等普通音频文件；
+- 如果 `.ncm` 带内嵌封面，会生成同名 `.cover.jpg` / `.cover.png` 等封面 sidecar；
+- 扫描器会继续把输出音频纳入曲库。
 
-NCM 扩展点在：
+## 曲库本地化 ZIP
+
+顶部“本地化ZIP”会把当前曲库打包为标准 ZIP：
+
+- `library.json`：包内相对路径版曲库索引；
+- `music/...`：当前曲库引用到的音频、封面、歌词资源；
+- ZIP 使用标准 store 条目，方便系统解压工具直接读取。
+
+NCM 转换入口在：
 
 ```text
 src/NcmImportService.h
 src/NcmImportService.cpp
 ```
 
-你只需要实现：
+核心函数：
 
 ```cpp
 NcmImportResult NcmImportService::convertToOpenAudio(const QString &inputPath)

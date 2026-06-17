@@ -131,6 +131,15 @@ ApplicationWindow {
     }
 
     FileDialog {
+        id: localizedZipDialog
+        title: "本地化导出曲库 ZIP"
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "zip"
+        nameFilters: ["ZIP Archive (*.zip)", "All files (*)"]
+        onAccepted: say(libraryManager.exportLocalizedZip(selectedFile))
+    }
+
+    FileDialog {
         id: scriptDialog
         title: "运行曲库整理 JS"
         fileMode: FileDialog.OpenFile
@@ -232,6 +241,7 @@ ApplicationWindow {
             GhostButton { text: "导入"; onClicked: importDialog.open() }
             GhostButton { text: "合并"; onClicked: mergeDialog.open() }
             GhostButton { text: "导出"; onClicked: exportDialog.open() }
+            GhostButton { text: "本地化ZIP"; onClicked: localizedZipDialog.open() }
             AccentButton { text: "JS 整理"; onClicked: scriptDialog.open() }
         }
 
