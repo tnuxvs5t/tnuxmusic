@@ -646,14 +646,51 @@ ApplicationWindow {
                                 GradientStop { position: 1.0; color: "#aa000000" }
                             }
                         }
-                        Text {
+                        Item {
+                            width: 172
+                            height: 172
                             anchors.centerIn: parent
-                            text: "TNX\nMUSIC"
-                            horizontalAlignment: Text.AlignHCenter
-                            color: root.accent
-                            font.pixelSize: 36
-                            font.bold: true
                             visible: !(selectedTrack().coverUrl || "").length
+
+                            Rectangle {
+                                width: parent.width
+                                height: parent.height
+                                x: 22
+                                y: 26
+                                radius: 34
+                                color: "#000000"
+                                opacity: 0.42
+                            }
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: 34
+                                gradient: Gradient {
+                                    GradientStop { position: 0.0; color: "#243640" }
+                                    GradientStop { position: 0.58; color: "#111e25" }
+                                    GradientStop { position: 1.0; color: "#070d11" }
+                                }
+                                border.color: "#304852"
+                                border.width: 1
+                            }
+                            Rectangle {
+                                anchors.centerIn: parent
+                                width: parent.width * 0.56
+                                height: parent.height * 0.56
+                                radius: 24
+                                color: "#05090d"
+                                opacity: 0.36
+                            }
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.top: parent.top
+                                anchors.leftMargin: 22
+                                anchors.topMargin: 20
+                                width: parent.width * 0.55
+                                height: 2
+                                radius: 1
+                                color: root.accent
+                                opacity: 0.32
+                            }
                         }
                     }
 
