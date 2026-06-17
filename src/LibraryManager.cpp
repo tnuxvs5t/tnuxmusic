@@ -4,6 +4,8 @@
 
 #include <QDir>
 #include <QDirIterator>
+#include <QCoreApplication>
+#include <QCollator>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -11,6 +13,7 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <QStandardPaths>
+#include <algorithm>
 
 static const QSet<QString> kAudioExt = {
     "mp3", "flac", "wav", "m4a", "aac", "ogg", "opus", "wma", "aiff", "alac"
@@ -24,6 +27,20 @@ static const QStringList kImageExt = {
     "jpg", "jpeg", "png", "webp", "bmp"
 };
 
+struct AlbumSidecar {
+    bool valid = false;
+    QString album;
+    QString artist;
+    QString genre;
+    QString coverPath;
+    int year = 0;
+    QJsonObject track;
+};
+
+#ifndef TNUXMUSIC_SOURCE_DIR
+#define TNUXMUSIC_SOURCE_DIR ""
+#endif
+
 static QString cleanTitle(QString s)
 {
     s.replace('_', ' ');
@@ -32,6 +49,21 @@ static QString cleanTitle(QString s)
         QRegularExpression::CaseInsensitiveOption);
     s.remove(qualitySuffix);
     return s.simplified();
+}
+
+static QString textValue(const QJsonObject &obj, const QString &key)
+{
+    return obj.value(key).toString().trimmed();
+}
+
+static int intValue(const QJsonObject &obj, const QString &key, int fallback = 0)
+{
+    const QJsonValue v = obj.value(key);
+    if (v.isDouble())
+        return v.toInt(fallback);
+    bool ok = false;
+    const int x = v.toString().toInt(&ok);
+    return ok ? x : fallback;
 }
 
 static QString qualityLabelFor(const QFileInfo &info)
@@ -65,6 +97,92 @@ static QString findSidecar(const QFileInfo &audio, const QStringList &suffixes, 
             const QString candidate = dir.filePath(base + "." + ext);
             if (QFileInfo::exists(candidate))
                 return canonicalLocalPath(candidate);
+        }
+    }
+    return {};
+}
+
+static void inferAlbumArtistFromFolder(const QString &folderName, QString *album, QString *artist)
+{
+    static const QRegularExpression re(R"(^(.+?)\s+-\s+(.+)$)");
+    const auto m = re.match(folderName);
+    if (!m.hasMatch())
+        return;
+    if (album && album->trimmed().isEmpty())
+        *album = m.captured(1).trimmed();
+    if (artist && artist->trimmed().isEmpty())
+        *artist = m.captured(2).trimmed();
+}
+
+static QJsonObject readJsonObjectFile(const QString &path)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly))
+        return {};
+    QJsonParseError pe;
+    const QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &pe);
+    if (pe.error != QJsonParseError::NoError || !doc.isObject())
+        return {};
+    return doc.object();
+}
+
+static AlbumSidecar readAlbumSidecar(const QFileInfo &audio)
+{
+    const QDir dir = audio.dir();
+    QJsonObject root;
+    for (const QString &name : {QStringLiteral("album.tnux.json"), QStringLiteral("album.json")}) {
+        root = readJsonObjectFile(dir.filePath(name));
+        if (!root.isEmpty())
+            break;
+    }
+    if (root.isEmpty())
+        return {};
+
+    AlbumSidecar sidecar;
+    sidecar.valid = true;
+    sidecar.album = textValue(root, "album");
+    sidecar.artist = textValue(root, "artist");
+    sidecar.genre = textValue(root, "genre");
+    sidecar.year = intValue(root, "year");
+
+    const QString cover = textValue(root, "cover");
+    if (!cover.isEmpty())
+        sidecar.coverPath = canonicalLocalPath(dir.filePath(cover));
+
+    const QJsonArray tracks = root.value("tracks").toArray();
+    const QString fileName = audio.fileName();
+    const QString stem = audio.completeBaseName();
+    for (const auto &v : tracks) {
+        const QJsonObject t = v.toObject();
+        const QString file = textValue(t, "file");
+        const QString title = textValue(t, "title");
+        if (file == fileName || file == stem || title.compare(stem, Qt::CaseInsensitive) == 0) {
+            sidecar.track = t;
+            break;
+        }
+    }
+    return sidecar;
+}
+
+static QString bundledExampleMusicPath()
+{
+    const QStringList roots = {
+        QString::fromUtf8(TNUXMUSIC_SOURCE_DIR),
+        QCoreApplication::applicationDirPath(),
+        QDir::currentPath(),
+    };
+    const QStringList rels = {
+        QStringLiteral("Physics - nova9tekgrid"),
+        QStringLiteral("examples/music/Physics - nova9tekgrid"),
+    };
+
+    for (const QString &root : roots) {
+        if (root.trimmed().isEmpty())
+            continue;
+        for (const QString &rel : rels) {
+            const QString path = QDir(root).filePath(rel);
+            if (QFileInfo(path).isDir())
+                return canonicalLocalPath(path);
         }
     }
     return {};
@@ -131,6 +249,12 @@ QHash<int, QByteArray> LibraryManager::roleNames() const
 QString LibraryManager::loadDefault()
 {
     if (!QFileInfo::exists(m_libraryPath)) {
+        const QString demoPath = bundledExampleMusicPath();
+        if (!demoPath.isEmpty()) {
+            const QString scan = scanFolder(demoPath);
+            setLastMessage(QStringLiteral("已创建示例曲库：%1").arg(scan));
+            return m_lastMessage;
+        }
         setLastMessage(QStringLiteral("默认曲库尚未创建：%1").arg(m_libraryPath));
         return m_lastMessage;
     }
@@ -182,6 +306,7 @@ QString LibraryManager::scanFolder(const QString &folderUrl)
         ++audioFiles;
         mergeTrack(inferTrackFromAudioFile(path));
     }
+    sortTracks();
     endResetModel();
     emit libraryChanged();
 
@@ -222,6 +347,7 @@ QString LibraryManager::mergeLibrary(const QString &fileUrl)
     const int before = m_tracks.size();
     beginResetModel();
     const bool ok = mergeFromJsonObject(obj, &error);
+    sortTracks();
     endResetModel();
     if (!ok) {
         setLastMessage(error);
@@ -329,6 +455,7 @@ bool LibraryManager::replaceFromJsonObject(const QJsonObject &obj, QString *erro
     m_tracks.clear();
     for (const auto &t : next)
         mergeTrack(t);
+    sortTracks();
     endResetModel();
     emit libraryChanged();
 
@@ -345,6 +472,7 @@ bool LibraryManager::mergeFromJsonObject(const QJsonObject &obj, QString *error)
         if (!t.qualities.isEmpty())
             mergeTrack(t);
     }
+    sortTracks();
     if (error)
         error->clear();
     return true;
@@ -438,6 +566,7 @@ Track LibraryManager::inferTrackFromAudioFile(const QString &path) const
     const QFileInfo info(path);
     Track t;
     const AudioMetadata meta = MetadataReader::read(path);
+    const AlbumSidecar sidecar = readAlbumSidecar(info);
 
     t.title = meta.title.isEmpty() ? cleanTitle(info.completeBaseName()) : meta.title;
     t.album = meta.album.isEmpty() ? info.dir().dirName() : meta.album;
@@ -446,6 +575,27 @@ Track LibraryManager::inferTrackFromAudioFile(const QString &path) const
     t.year = meta.year;
     t.trackNo = meta.trackNo;
     t.disc = meta.disc > 0 ? meta.disc : 1;
+
+    if (sidecar.valid) {
+        if (!textValue(sidecar.track, "title").isEmpty())
+            t.title = textValue(sidecar.track, "title");
+        if (!textValue(sidecar.track, "artist").isEmpty())
+            t.artist = textValue(sidecar.track, "artist");
+        if (!textValue(sidecar.track, "album").isEmpty())
+            t.album = textValue(sidecar.track, "album");
+        if (!sidecar.artist.isEmpty())
+            t.artist = sidecar.artist;
+        if (!sidecar.album.isEmpty())
+            t.album = sidecar.album;
+        if (!sidecar.genre.isEmpty())
+            t.genre = sidecar.genre;
+        if (sidecar.year > 0)
+            t.year = sidecar.year;
+        t.trackNo = intValue(sidecar.track, "track", t.trackNo);
+        t.disc = intValue(sidecar.track, "disc", t.disc);
+    }
+
+    inferAlbumArtistFromFolder(info.dir().dirName(), &t.album, &t.artist);
 
     QDir artistDir = info.dir();
     if (t.artist.isEmpty() && artistDir.cdUp())
@@ -457,8 +607,27 @@ Track LibraryManager::inferTrackFromAudioFile(const QString &path) const
     q.label = qualityLabelFor(info);
     t.qualities.push_back(q);
 
-    t.coverPath = findSidecar(info, kImageExt, kCoverNames);
+    t.coverPath = sidecar.coverPath.isEmpty() ? findSidecar(info, kImageExt, kCoverNames) : sidecar.coverPath;
     t.lyricPath = findSidecar(info, {"tly"}, {});
     t.id = stableTrackId(t);
     return t;
+}
+
+void LibraryManager::sortTracks()
+{
+    QCollator collator;
+    collator.setNumericMode(true);
+    std::sort(m_tracks.begin(), m_tracks.end(), [&](const Track &a, const Track &b) {
+        int c = collator.compare(a.artist, b.artist);
+        if (c != 0)
+            return c < 0;
+        c = collator.compare(a.album, b.album);
+        if (c != 0)
+            return c < 0;
+        if (a.disc != b.disc)
+            return a.disc < b.disc;
+        if (a.trackNo != b.trackNo)
+            return a.trackNo < b.trackNo;
+        return collator.compare(a.displayTitle(), b.displayTitle()) < 0;
+    });
 }

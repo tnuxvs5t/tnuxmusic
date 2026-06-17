@@ -58,6 +58,10 @@ target_link_libraries(tnuxmusic PRIVATE
     Qt6::Qml
 )
 
+target_compile_definitions(tnuxmusic PRIVATE
+    TNUXMUSIC_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
 install(TARGETS tnuxmusic
     BUNDLE DESTINATION .
     RUNTIME DESTINATION bin

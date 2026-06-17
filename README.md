@@ -12,6 +12,7 @@
 
 ## 当前功能
 
+- 内置示例 Techno 专辑：`Physics` / `nova9tekgrid`；
 - 扫描本地音乐文件夹；
 - 自动识别常见音频格式：`mp3/flac/wav/m4a/aac/ogg/opus/...`；
 - 自动关联同名 `.tly` 歌词；
@@ -34,6 +35,14 @@ cmake --preset qt6-debug
 cmake --build --preset qt6-debug
 ./build/qt6-debug/tnuxmusic
 ```
+
+首次运行时，如果本机还没有默认曲库，应用会自动把仓库里的示例专辑：
+
+```text
+Physics - nova9tekgrid/
+```
+
+扫描进默认曲库。
 
 Qt 路径默认使用：
 

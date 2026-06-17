@@ -74,4 +74,5 @@ private:
     bool writeJsonFile(const QString &path, const QJsonObject &obj, QString *error) const;
     void mergeTrack(const Track &track);
     Track inferTrackFromAudioFile(const QString &path) const;
+    void sortTracks();
 };
