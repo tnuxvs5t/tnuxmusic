@@ -485,6 +485,17 @@ ApplicationWindow {
                                     AccentButton { text: "播放专辑"; enabled: selectedAlbum >= 0; onClicked: playAlbum(selectedAlbum) }
                                     GhostButton { text: "加入队列"; enabled: selectedAlbum >= 0; onClicked: enqueueAlbum(selectedAlbum) }
                                 }
+                                GhostButton {
+                                    Layout.fillWidth: true
+                                    text: "从曲库删除专辑"
+                                    enabled: selectedAlbum >= 0
+                                    onClicked: {
+                                        var a = selectedAlbumInfo()
+                                        say(libraryManager.removeAlbum(a.artist || "", a.album || ""))
+                                        selectedAlbum = -1
+                                        selectedIndex = -1
+                                    }
+                                }
 
                                 ListView {
                                     Layout.fillWidth: true

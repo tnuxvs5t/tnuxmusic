@@ -48,6 +48,7 @@ public:
     Q_INVOKABLE QString importLibrary(const QString &fileUrl);
     Q_INVOKABLE QString mergeLibrary(const QString &fileUrl);
     Q_INVOKABLE QString exportLibrary(const QString &fileUrl) const;
+    Q_INVOKABLE QString removeAlbum(const QString &artist, const QString &album);
     Q_INVOKABLE QVariantMap track(int row) const;
     Q_INVOKABLE int rowOfTrackId(const QString &id) const;
     Q_INVOKABLE QString primaryPath(int row) const;

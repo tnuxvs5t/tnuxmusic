@@ -13,10 +13,15 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <QStandardPaths>
+#include <QTextStream>
 #include <algorithm>
 
 static const QSet<QString> kAudioExt = {
     "mp3", "flac", "wav", "m4a", "aac", "ogg", "opus", "wma", "aiff", "alac"
+};
+
+static const QSet<QString> kEncryptedExt = {
+    "ncm"
 };
 
 static const QStringList kCoverNames = {
@@ -79,6 +84,210 @@ static QString qualityLabelFor(const QFileInfo &info)
     if (name.contains("128"))
         return QStringLiteral("MP3 128k");
     return ext.toUpper();
+}
+
+struct LrcLine {
+    qint64 startMs = 0;
+    QString text;
+};
+
+static qint64 parseLrcTimeMs(QString s, bool *ok = nullptr)
+{
+    s = s.trimmed();
+    s.replace(',', '.');
+    const QStringList parts = s.split(':');
+    if (parts.size() < 2) {
+        if (ok)
+            *ok = false;
+        return 0;
+    }
+
+    bool secOk = false;
+    const double secDouble = parts.last().toDouble(&secOk);
+    if (!secOk) {
+        if (ok)
+            *ok = false;
+        return 0;
+    }
+
+    qint64 totalMs = qint64(secDouble * 1000.0 + 0.5);
+    qint64 mul = 60 * 1000;
+    for (int i = parts.size() - 2; i >= 0; --i) {
+        bool partOk = false;
+        const qint64 v = parts[i].toLongLong(&partOk);
+        if (!partOk) {
+            if (ok)
+                *ok = false;
+            return 0;
+        }
+        totalMs += v * mul;
+        mul *= 60;
+    }
+
+    if (ok)
+        *ok = true;
+    return totalMs;
+}
+
+static QString formatTlyTime(qint64 ms)
+{
+    if (ms < 0)
+        ms = 0;
+    const qint64 h = ms / 3600000;
+    ms %= 3600000;
+    const qint64 m = ms / 60000;
+    ms %= 60000;
+    const qint64 s = ms / 1000;
+    const qint64 z = ms % 1000;
+    if (h > 0) {
+        return QStringLiteral("%1:%2:%3.%4")
+            .arg(h)
+            .arg(m, 2, 10, QLatin1Char('0'))
+            .arg(s, 2, 10, QLatin1Char('0'))
+            .arg(z, 3, 10, QLatin1Char('0'));
+    }
+    return QStringLiteral("%1:%2.%3")
+        .arg(m, 2, 10, QLatin1Char('0'))
+        .arg(s, 2, 10, QLatin1Char('0'))
+        .arg(z, 3, 10, QLatin1Char('0'));
+}
+
+static QString cleanTlyText(QString s)
+{
+    s.replace('\r', ' ');
+    s.replace('\n', ' ');
+    return s.simplified();
+}
+
+static QVector<LrcLine> parseLrcFile(const QString &path, QMap<QString, QString> *meta = nullptr)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+        return {};
+
+    const QString content = QString::fromUtf8(f.readAll());
+    static const QRegularExpression metaRe(R"(^\s*\[([A-Za-z]+):([^\]]*)\]\s*$)");
+    static const QRegularExpression timeRe(R"(\[(\d{1,3}:\d{2}(?:[\.,:]\d{1,3})?)\])");
+
+    QVector<LrcLine> out;
+    const QStringList rows = content.split(QRegularExpression("[\r\n]"), Qt::SkipEmptyParts);
+    for (const QString &raw : rows) {
+        const QString row = raw.trimmed();
+        const auto mm = metaRe.match(row);
+        if (mm.hasMatch()) {
+            if (meta)
+                meta->insert(mm.captured(1).toCaseFolded(), mm.captured(2).trimmed());
+            continue;
+        }
+
+        QVector<qint64> times;
+        auto it = timeRe.globalMatch(row);
+        while (it.hasNext()) {
+            const auto m = it.next();
+            bool ok = false;
+            const qint64 ms = parseLrcTimeMs(m.captured(1), &ok);
+            if (ok)
+                times.push_back(ms);
+        }
+        if (times.isEmpty())
+            continue;
+
+        QString text = row;
+        text.remove(timeRe);
+        text = cleanTlyText(text);
+        for (qint64 ms : times)
+            out.push_back({ms, text});
+    }
+
+    std::sort(out.begin(), out.end(), [](const LrcLine &a, const LrcLine &b) {
+        if (a.startMs != b.startMs)
+            return a.startMs < b.startMs;
+        return a.text < b.text;
+    });
+    return out;
+}
+
+static QMap<qint64, QString> readTranslationJson(const QFileInfo &audio, const QVector<LrcLine> &lines)
+{
+    QMap<qint64, QString> out;
+    const QString path = audio.dir().filePath(audio.completeBaseName() + ".zh-CN.json");
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly))
+        return out;
+
+    QJsonParseError pe;
+    const QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &pe);
+    if (pe.error != QJsonParseError::NoError)
+        return out;
+
+    if (doc.isArray()) {
+        int k = 0;
+        const QJsonArray arr = doc.array();
+        for (const auto &line : lines) {
+            if (line.text.isEmpty())
+                continue;
+            if (k < arr.size() && !arr[k].toString().trimmed().isEmpty())
+                out.insert(line.startMs, arr[k].toString().trimmed());
+            ++k;
+        }
+    } else if (doc.isObject()) {
+        const QJsonObject obj = doc.object();
+        for (auto it = obj.begin(); it != obj.end(); ++it) {
+            bool ok = false;
+            qint64 ms = it.key().toLongLong(&ok);
+            if (!ok)
+                ms = parseLrcTimeMs(it.key(), &ok);
+            if (ok && !it.value().toString().trimmed().isEmpty())
+                out.insert(ms, it.value().toString().trimmed());
+        }
+    }
+    return out;
+}
+
+static QString convertLrcToTly(const QFileInfo &audio, const Track &track)
+{
+    const QDir dir = audio.dir();
+    const QString lrcPath = dir.filePath(audio.completeBaseName() + ".lrc");
+    if (!QFileInfo::exists(lrcPath))
+        return {};
+
+    const QString tlyPath = dir.filePath(audio.completeBaseName() + ".tly");
+    if (QFileInfo::exists(tlyPath))
+        return canonicalLocalPath(tlyPath);
+
+    QMap<QString, QString> meta;
+    const QVector<LrcLine> lines = parseLrcFile(lrcPath, &meta);
+    if (lines.isEmpty())
+        return {};
+
+    const QMap<qint64, QString> translations = readTranslationJson(audio, lines);
+
+    QFile out(tlyPath);
+    if (!out.open(QIODevice::WriteOnly | QIODevice::Text))
+        return {};
+
+    QTextStream ts(&out);
+    ts.setEncoding(QStringConverter::Utf8);
+    ts << "@title = " << cleanTlyText(track.displayTitle()) << "\n";
+    if (!track.artist.trimmed().isEmpty())
+        ts << "@artist = " << cleanTlyText(track.artist) << "\n";
+    if (!track.album.trimmed().isEmpty())
+        ts << "@album = " << cleanTlyText(track.album) << "\n";
+    if (!track.genre.trimmed().isEmpty())
+        ts << "@genre = " << cleanTlyText(track.genre) << "\n";
+    if (meta.contains("by"))
+        ts << "@lrc_by = " << cleanTlyText(meta.value("by")) << "\n";
+    ts << "@source = lrc\n\n";
+
+    for (const auto &line : lines) {
+        if (line.text.isEmpty())
+            continue;
+        ts << "[" << formatTlyTime(line.startMs) << "]" << cleanTlyText(line.text) << "\n";
+        const QString tr = translations.value(line.startMs);
+        if (!tr.isEmpty())
+            ts << "[" << formatTlyTime(line.startMs) << "|tr=zh-CN]" << cleanTlyText(tr) << "\n";
+    }
+    return canonicalLocalPath(tlyPath);
 }
 
 static QString findSidecar(const QFileInfo &audio, const QStringList &suffixes, const QStringList &baseNames)
@@ -296,12 +505,18 @@ QString LibraryManager::scanFolder(const QString &folderUrl)
 
     int addedBefore = m_tracks.size();
     int audioFiles = 0;
+    int ncmFiles = 0;
     beginResetModel();
     QDirIterator it(folder, QDir::Files | QDir::Readable, QDirIterator::Subdirectories);
     while (it.hasNext()) {
         const QString path = it.next();
         const QFileInfo info(path);
-        if (!kAudioExt.contains(info.suffix().toLower()))
+        const QString ext = info.suffix().toLower();
+        if (kEncryptedExt.contains(ext)) {
+            ++ncmFiles;
+            continue;
+        }
+        if (!kAudioExt.contains(ext))
             continue;
         ++audioFiles;
         mergeTrack(inferTrackFromAudioFile(path));
@@ -312,8 +527,12 @@ QString LibraryManager::scanFolder(const QString &folderUrl)
 
     save();
     const int added = m_tracks.size() - addedBefore;
-    setLastMessage(QStringLiteral("扫描完成：发现 %1 个音频文件，新增 %2 首，曲库共 %3 首")
-                       .arg(audioFiles).arg(added).arg(m_tracks.size()));
+    QString msg = QStringLiteral("扫描完成：发现 %1 个音频文件，新增 %2 首，曲库共 %3 首")
+                      .arg(audioFiles).arg(added).arg(m_tracks.size());
+    if (ncmFiles > 0) {
+        msg += QStringLiteral("；跳过 %1 个 NCM 加密文件（不内置解密/绕过 DRM）").arg(ncmFiles);
+    }
+    setLastMessage(msg);
     return m_lastMessage;
 }
 
@@ -366,6 +585,43 @@ QString LibraryManager::exportLibrary(const QString &fileUrl) const
     if (!writeJsonFile(path, toJsonObject(), &error))
         return error;
     return QStringLiteral("已导出曲库：%1").arg(path);
+}
+
+QString LibraryManager::removeAlbum(const QString &artist, const QString &album)
+{
+    const QString a = artist.simplified().toCaseFolded();
+    const QString b = album.simplified().toCaseFolded();
+    if (a.isEmpty() && b.isEmpty()) {
+        const QString msg = QStringLiteral("删除失败：没有选中专辑");
+        setLastMessage(msg);
+        return msg;
+    }
+
+    int removed = 0;
+    beginResetModel();
+    auto it = std::remove_if(m_tracks.begin(), m_tracks.end(), [&](const Track &t) {
+        const bool hit = t.artist.simplified().toCaseFolded() == a
+            && t.album.simplified().toCaseFolded() == b;
+        if (hit)
+            ++removed;
+        return hit;
+    });
+    m_tracks.erase(it, m_tracks.end());
+    endResetModel();
+    emit libraryChanged();
+
+    if (removed > 0) {
+        save();
+        const QString msg = QStringLiteral("已从曲库删除专辑：%1 / %2（%3 首，磁盘文件未删除）")
+                                .arg(artist, album)
+                                .arg(removed);
+        setLastMessage(msg);
+        return msg;
+    }
+
+    const QString msg = QStringLiteral("没有找到专辑：%1 / %2").arg(artist, album);
+    setLastMessage(msg);
+    return msg;
 }
 
 const Track *LibraryManager::trackAt(int row) const
@@ -609,6 +865,8 @@ Track LibraryManager::inferTrackFromAudioFile(const QString &path) const
 
     t.coverPath = sidecar.coverPath.isEmpty() ? findSidecar(info, kImageExt, kCoverNames) : sidecar.coverPath;
     t.lyricPath = findSidecar(info, {"tly"}, {});
+    if (t.lyricPath.isEmpty())
+        t.lyricPath = convertLrcToTly(info, t);
     t.id = stableTrackId(t);
     return t;
 }
