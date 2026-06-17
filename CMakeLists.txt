@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.24)
 
 project(tnuxmusic VERSION 0.1.0 LANGUAGES CXX)
 
+include(GNUInstallDirs)
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -52,6 +54,12 @@ qt_add_qml_module(tnuxmusic
         qml/Main.qml
 )
 
+qt_generate_deploy_qml_app_script(
+    TARGET tnuxmusic
+    OUTPUT_SCRIPT deploy_script
+    NO_UNSUPPORTED_PLATFORM_ERROR
+)
+
 target_link_libraries(tnuxmusic PRIVATE
     Qt6::Core
     Qt6::Gui
@@ -68,5 +76,21 @@ target_compile_definitions(tnuxmusic PRIVATE
 
 install(TARGETS tnuxmusic
     BUNDLE DESTINATION .
-    RUNTIME DESTINATION bin
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+install(SCRIPT ${deploy_script})
+
+if(UNIX AND NOT APPLE)
+    set(CPACK_PACKAGE_NAME "tnuxmusic")
+    set(CPACK_PACKAGE_VENDOR "tnuxmusic")
+    set(CPACK_PACKAGE_CONTACT "tnuxmusic")
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "A Qt 6 desktop music player with NCM import support")
+    set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+    set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+    set(CPACK_GENERATOR "DEB")
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "tnuxmusic")
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+    set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+endif()
+
+include(CPack)

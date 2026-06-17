@@ -12,6 +12,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QHash>
+#include <QIODevice>
+#include <QCryptographicHash>
 #include <QRegularExpression>
 #include <QSet>
 #include <QStandardPaths>
@@ -123,6 +125,18 @@ static void writeLe32(QFile &file, quint32 value)
     file.write(bytes, 4);
 }
 
+static quint16 readZipLe16(const QByteArray &bytes, int offset)
+{
+    const auto *p = reinterpret_cast<const uchar *>(bytes.constData() + offset);
+    return quint16(p[0]) | (quint16(p[1]) << 8);
+}
+
+static quint32 readZipLe32(const QByteArray &bytes, int offset)
+{
+    const auto *p = reinterpret_cast<const uchar *>(bytes.constData() + offset);
+    return quint32(p[0]) | (quint32(p[1]) << 8) | (quint32(p[2]) << 16) | (quint32(p[3]) << 24);
+}
+
 static QString zipSafeName(QString name)
 {
     name.replace('\\', '/');
@@ -139,6 +153,167 @@ static QString zipSafeName(QString name)
         safe << part;
     }
     return safe.join('/');
+}
+
+static QString libraryImportCacheRoot()
+{
+    const QString root = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    return QDir(root).filePath("import-cache");
+}
+
+static QString zipCacheDirFor(const QString &archivePath)
+{
+    const QString base = libraryImportCacheRoot();
+    QDir().mkpath(base);
+
+    const QFileInfo info(archivePath);
+    const QByteArray key = info.absoluteFilePath().toUtf8() + "|" + QByteArray::number(info.size()) + "|"
+        + QByteArray::number(info.lastModified().toMSecsSinceEpoch());
+    const QByteArray digest = QCryptographicHash::hash(key, QCryptographicHash::Sha1).toHex();
+    return QDir(base).filePath(QString::fromLatin1(digest));
+}
+
+static bool extractZipToDir(const QString &zipPath, const QString &destDir, QString *error)
+{
+    QDir().mkpath(destDir);
+
+    QFile zip(zipPath);
+    if (!zip.open(QIODevice::ReadOnly)) {
+        if (error)
+            *error = QStringLiteral("无法读取 ZIP：%1").arg(zipPath);
+        return false;
+    }
+
+    while (!zip.atEnd()) {
+        const QByteArray header = zip.read(30);
+        if (header.isEmpty())
+            break;
+        if (header.size() < 30 || readZipLe32(header, 0) != 0x04034b50)
+            break;
+
+        const quint16 method = readZipLe16(header, 8);
+        const quint32 compressedSize = readZipLe32(header, 18);
+        const quint32 uncompressedSize = readZipLe32(header, 22);
+        const quint16 nameLen = readZipLe16(header, 26);
+        const quint16 extraLen = readZipLe16(header, 28);
+        const QByteArray nameBytes = zip.read(nameLen);
+        if (nameBytes.size() != nameLen || !zip.seek(zip.pos() + extraLen)) {
+            if (error)
+                *error = QStringLiteral("ZIP 文件损坏：%1").arg(zipPath);
+            return false;
+        }
+
+        QString name = QString::fromUtf8(nameBytes);
+        name.replace('\\', '/');
+        name = QDir::cleanPath(name);
+        if (name.isEmpty() || name.startsWith("../") || name.contains("/../") || name == "..") {
+            if (!zip.seek(zip.pos() + compressedSize))
+                return false;
+            continue;
+        }
+
+        if (name.endsWith('/')) {
+            QDir().mkpath(QDir(destDir).filePath(name));
+            continue;
+        }
+        if (method != 0) {
+            if (error)
+                *error = QStringLiteral("ZIP 条目使用压缩算法 %1，当前内置导入器只支持本应用导出的 store ZIP：%2")
+                             .arg(method)
+                             .arg(name);
+            return false;
+        }
+        if (compressedSize != uncompressedSize) {
+            if (error)
+                *error = QStringLiteral("ZIP 条目大小异常：%1").arg(name);
+            return false;
+        }
+
+        const QFileInfo outInfo(QDir(destDir).filePath(name));
+        if (!outInfo.absoluteDir().exists())
+            QDir().mkpath(outInfo.absolutePath());
+        QFile out(outInfo.absoluteFilePath());
+        if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            if (error)
+                *error = QStringLiteral("无法写入解包文件：%1").arg(name);
+            return false;
+        }
+
+        quint32 remaining = compressedSize;
+        while (remaining > 0) {
+            const QByteArray chunk = zip.read(qMin<quint32>(remaining, 128 * 1024));
+            if (chunk.isEmpty()) {
+                if (error)
+                    *error = QStringLiteral("ZIP 条目截断：%1").arg(name);
+                return false;
+            }
+            if (out.write(chunk) != chunk.size()) {
+                if (error)
+                    *error = QStringLiteral("无法写入解包文件：%1").arg(name);
+                return false;
+            }
+            remaining -= chunk.size();
+        }
+    }
+    return true;
+}
+
+static bool readLibrarySourceInternal(const QString &path, QJsonObject *out, QString *baseDir, QString *error)
+{
+    const QFileInfo info(path);
+    if (!info.exists()) {
+        if (error)
+            *error = QStringLiteral("文件不存在：%1").arg(path);
+        return false;
+    }
+
+    if (info.suffix().toLower() == "zip") {
+        const QString destDir = zipCacheDirFor(info.absoluteFilePath());
+        const QString marker = QDir(destDir).filePath(".unzipped");
+        if (!QFileInfo::exists(marker)) {
+            if (!extractZipToDir(info.absoluteFilePath(), destDir, error))
+                return false;
+            QFile markerFile(marker);
+            if (markerFile.open(QIODevice::WriteOnly | QIODevice::Truncate))
+                markerFile.write("ok");
+        }
+
+        QFile f(QDir(destDir).filePath("library.json"));
+        if (!f.open(QIODevice::ReadOnly)) {
+            if (error)
+                *error = QStringLiteral("ZIP 中缺少 library.json：%1").arg(path);
+            return false;
+        }
+        QJsonParseError pe;
+        const QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &pe);
+        if (pe.error != QJsonParseError::NoError || !doc.isObject()) {
+            if (error)
+                *error = QStringLiteral("ZIP 曲库 JSON 错误：%1").arg(pe.errorString());
+            return false;
+        }
+        *out = doc.object();
+        if (baseDir)
+            *baseDir = destDir;
+        return true;
+    }
+
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        if (error)
+            *error = QStringLiteral("无法读取 JSON：%1").arg(path);
+        return false;
+    }
+    QJsonParseError pe;
+    const QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &pe);
+    if (pe.error != QJsonParseError::NoError || !doc.isObject()) {
+        if (error)
+            *error = QStringLiteral("JSON 格式错误：%1 (%2)").arg(path, pe.errorString());
+        return false;
+    }
+    *out = doc.object();
+    if (baseDir)
+        *baseDir = info.absolutePath();
+    return true;
 }
 
 static QString uniqueZipName(const QString &preferred, QSet<QString> *used)
@@ -818,12 +993,13 @@ QString LibraryManager::importLibrary(const QString &fileUrl)
 {
     const QString path = canonicalLocalPath(fileUrl);
     QJsonObject obj;
+    QString baseDir;
     QString error;
-    if (!readJsonFile(path, &obj, &error)) {
+    if (!readLibrarySource(path, &obj, &baseDir, &error)) {
         setLastMessage(error);
         return error;
     }
-    if (!replaceFromJsonObject(obj, &error)) {
+    if (!replaceFromJsonObject(obj, &error, baseDir)) {
         setLastMessage(error);
         return error;
     }
@@ -836,14 +1012,15 @@ QString LibraryManager::mergeLibrary(const QString &fileUrl)
 {
     const QString path = canonicalLocalPath(fileUrl);
     QJsonObject obj;
+    QString baseDir;
     QString error;
-    if (!readJsonFile(path, &obj, &error)) {
+    if (!readLibrarySource(path, &obj, &baseDir, &error)) {
         setLastMessage(error);
         return error;
     }
     const int before = m_tracks.size();
     beginResetModel();
-    const bool ok = mergeFromJsonObject(obj, &error);
+    const bool ok = mergeFromJsonObject(obj, &error, baseDir);
     sortTracks();
     endResetModel();
     if (!ok) {
@@ -1084,6 +1261,14 @@ void LibraryManager::clear()
     setLastMessage(QStringLiteral("已清空当前曲库"));
 }
 
+QString LibraryManager::clearLibrary()
+{
+    clear();
+    save();
+    setLastMessage(QStringLiteral("已清空当前曲库并保存"));
+    return m_lastMessage;
+}
+
 QJsonObject LibraryManager::toJsonObject() const
 {
     QJsonObject root;
@@ -1098,13 +1283,13 @@ QJsonObject LibraryManager::toJsonObject() const
     return root;
 }
 
-bool LibraryManager::replaceFromJsonObject(const QJsonObject &obj, QString *error)
+bool LibraryManager::replaceFromJsonObject(const QJsonObject &obj, QString *error, const QString &baseDir)
 {
     const QJsonArray arr = obj.value("tracks").toArray();
     QVector<Track> next;
     next.reserve(arr.size());
     for (const auto &v : arr) {
-        Track t = Track::fromJson(v.toObject());
+        Track t = Track::fromJson(v.toObject(), baseDir);
         if (!t.qualities.isEmpty())
             next.push_back(t);
     }
@@ -1122,11 +1307,11 @@ bool LibraryManager::replaceFromJsonObject(const QJsonObject &obj, QString *erro
     return true;
 }
 
-bool LibraryManager::mergeFromJsonObject(const QJsonObject &obj, QString *error)
+bool LibraryManager::mergeFromJsonObject(const QJsonObject &obj, QString *error, const QString &baseDir)
 {
     const QJsonArray arr = obj.value("tracks").toArray();
     for (const auto &v : arr) {
-        Track t = Track::fromJson(v.toObject());
+        Track t = Track::fromJson(v.toObject(), baseDir);
         if (!t.qualities.isEmpty())
             mergeTrack(t);
     }
@@ -1161,6 +1346,11 @@ bool LibraryManager::readJsonFile(const QString &path, QJsonObject *out, QString
     }
     *out = doc.object();
     return true;
+}
+
+bool LibraryManager::readLibrarySource(const QString &path, QJsonObject *out, QString *baseDir, QString *error) const
+{
+    return readLibrarySourceInternal(path, out, baseDir, error);
 }
 
 bool LibraryManager::writeJsonFile(const QString &path, const QJsonObject &obj, QString *error) const

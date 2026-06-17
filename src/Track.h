@@ -14,6 +14,7 @@ struct TrackQuality {
 
     QJsonObject toJson() const;
     static TrackQuality fromJson(const QJsonObject &obj);
+    static TrackQuality fromJson(const QJsonObject &obj, const QString &baseDir);
     QVariantMap toVariantMap() const;
 };
 
@@ -37,9 +38,11 @@ struct Track {
     QJsonObject toJson() const;
     QVariantMap toVariantMap() const;
     static Track fromJson(const QJsonObject &obj);
+    static Track fromJson(const QJsonObject &obj, const QString &baseDir);
 };
 
 QString canonicalLocalPath(const QString &pathOrUrl);
+QString canonicalLocalPath(const QString &pathOrUrl, const QString &baseDir);
+QString canonicalLocalPathForBase(const QString &baseDir, const QString &pathOrUrl);
 QString fileUrlFromPath(const QString &path);
 QString stableTrackId(const Track &track);
-

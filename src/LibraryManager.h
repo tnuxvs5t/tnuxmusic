@@ -50,6 +50,7 @@ public:
     Q_INVOKABLE QString exportLibrary(const QString &fileUrl) const;
     Q_INVOKABLE QString exportLocalizedZip(const QString &fileUrl) const;
     Q_INVOKABLE QString removeAlbum(const QString &artist, const QString &album);
+    Q_INVOKABLE QString clearLibrary();
     Q_INVOKABLE QVariantMap track(int row) const;
     Q_INVOKABLE int rowOfTrackId(const QString &id) const;
     Q_INVOKABLE QString primaryPath(int row) const;
@@ -58,8 +59,8 @@ public:
     Q_INVOKABLE void clear();
 
     QJsonObject toJsonObject() const;
-    bool replaceFromJsonObject(const QJsonObject &obj, QString *error = nullptr);
-    bool mergeFromJsonObject(const QJsonObject &obj, QString *error = nullptr);
+    bool replaceFromJsonObject(const QJsonObject &obj, QString *error = nullptr, const QString &baseDir = {});
+    bool mergeFromJsonObject(const QJsonObject &obj, QString *error = nullptr, const QString &baseDir = {});
 
 signals:
     void libraryChanged();
@@ -73,6 +74,7 @@ private:
 
     void setLastMessage(const QString &message);
     bool readJsonFile(const QString &path, QJsonObject *out, QString *error) const;
+    bool readLibrarySource(const QString &path, QJsonObject *out, QString *baseDir, QString *error) const;
     bool writeJsonFile(const QString &path, const QJsonObject &obj, QString *error) const;
     void mergeTrack(const Track &track);
     Track inferTrackFromAudioFile(const QString &path) const;

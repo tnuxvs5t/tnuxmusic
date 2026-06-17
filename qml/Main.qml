@@ -107,17 +107,17 @@ ApplicationWindow {
 
     FileDialog {
         id: importDialog
-        title: "导入曲库 JSON"
+        title: "导入曲库 JSON / ZIP"
         fileMode: FileDialog.OpenFile
-        nameFilters: ["TnuxMusic Library (*.json)", "JSON (*.json)", "All files (*)"]
+        nameFilters: ["TnuxMusic Library (*.json *.zip)", "JSON (*.json)", "ZIP Archive (*.zip)", "All files (*)"]
         onAccepted: say(libraryManager.importLibrary(selectedFile))
     }
 
     FileDialog {
         id: mergeDialog
-        title: "合并曲库 JSON"
+        title: "合并曲库 JSON / ZIP"
         fileMode: FileDialog.OpenFile
-        nameFilters: ["TnuxMusic Library (*.json)", "JSON (*.json)", "All files (*)"]
+        nameFilters: ["TnuxMusic Library (*.json *.zip)", "JSON (*.json)", "ZIP Archive (*.zip)", "All files (*)"]
         onAccepted: say(libraryManager.mergeLibrary(selectedFile))
     }
 
@@ -145,6 +145,26 @@ ApplicationWindow {
         fileMode: FileDialog.OpenFile
         nameFilters: ["JavaScript (*.js)", "All files (*)"]
         onAccepted: say(scriptBridge.runScript(selectedFile))
+    }
+
+    Dialog {
+        id: clearLibraryDialog
+        title: "清空曲库"
+        modal: true
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        anchors.centerIn: parent
+        Label {
+            text: "确定清空当前曲库吗？只删除曲库记录，不删除磁盘音乐文件。"
+            color: root.text1
+            wrapMode: Text.WordWrap
+            width: 360
+        }
+        onAccepted: {
+            selectedIndex = -1
+            selectedAlbum = -1
+            queueModel.clear()
+            say(libraryManager.clearLibrary())
+        }
     }
 
     component AccentButton: Button {
@@ -242,6 +262,7 @@ ApplicationWindow {
             GhostButton { text: "合并"; onClicked: mergeDialog.open() }
             GhostButton { text: "导出"; onClicked: exportDialog.open() }
             GhostButton { text: "本地化ZIP"; onClicked: localizedZipDialog.open() }
+            GhostButton { text: "清空曲库"; onClicked: clearLibraryDialog.open() }
             AccentButton { text: "JS 整理"; onClicked: scriptDialog.open() }
         }
 

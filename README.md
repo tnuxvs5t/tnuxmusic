@@ -77,10 +77,19 @@ Physics - nova9tekgrid/
 
 顶部按钮：
 
-- **导入**：加载一个曲库 JSON，替换当前曲库；
-- **合并**：把另一个曲库 JSON 合并进当前曲库；
+- **导入**：加载一个曲库 JSON 或本地化 ZIP，替换当前曲库；
+- **合并**：把另一个曲库 JSON 或本地化 ZIP 合并进当前曲库；
 - **导出**：导出当前曲库 JSON；
 - **本地化ZIP**：把当前曲库的索引、音频、封面、歌词打包成标准 ZIP。
+- **清空曲库**：清空当前曲库记录并保存，不删除磁盘音乐文件。
+
+## GitHub Release
+
+项目会在打 tag 后自动发布 GitHub Release，常见资产包括：
+
+- `tnuxmusic-<tag>-linux-amd64.deb`
+- `tnuxmusic-<tag>-windows-x64.zip`
+- `tnuxmusic-<tag>-windows-x64-setup.exe`
 
 ## 为什么推荐
 
@@ -170,7 +179,8 @@ NcmImportResult NcmImportService::convertToOpenAudio(const QString &inputPath)
 - `library.json`：包内相对路径版曲库索引；
 - `music/...`：当前曲库引用到的音频、封面、歌词资源；
 - ZIP 使用标准 store 条目，系统解压工具可直接读取；
-- 当前实现不使用 ZIP64，超过 4GiB 或超过 65535 条目会返回错误。
+- 当前实现不使用 ZIP64，超过 4GiB 或超过 65535 条目会返回错误；
+- 导入 / 合并本地化 ZIP 时会解包到应用数据目录，并按解包目录解析 `library.json` 的相对路径，避免音乐和封面路径失效。
 
 相关入口：
 

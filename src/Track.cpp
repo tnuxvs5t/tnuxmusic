@@ -14,6 +14,11 @@ static QString trimmedLower(QString s)
 
 QString canonicalLocalPath(const QString &pathOrUrl)
 {
+    return canonicalLocalPath(pathOrUrl, {});
+}
+
+QString canonicalLocalPath(const QString &pathOrUrl, const QString &baseDir)
+{
     QString s = pathOrUrl.trimmed();
     if (s.isEmpty())
         return {};
@@ -29,7 +34,19 @@ QString canonicalLocalPath(const QString &pathOrUrl)
     if (info.isAbsolute())
         return QDir::cleanPath(info.absoluteFilePath());
 
+    if (!baseDir.trimmed().isEmpty()) {
+        QFileInfo based(QDir(baseDir).filePath(s));
+        if (based.exists())
+            return based.canonicalFilePath();
+        return QDir::cleanPath(based.absoluteFilePath());
+    }
+
     return QDir::cleanPath(s);
+}
+
+QString canonicalLocalPathForBase(const QString &baseDir, const QString &pathOrUrl)
+{
+    return canonicalLocalPath(pathOrUrl, baseDir);
 }
 
 QString fileUrlFromPath(const QString &path)
@@ -54,9 +71,14 @@ QJsonObject TrackQuality::toJson() const
 
 TrackQuality TrackQuality::fromJson(const QJsonObject &obj)
 {
+    return fromJson(obj, {});
+}
+
+TrackQuality TrackQuality::fromJson(const QJsonObject &obj, const QString &baseDir)
+{
     TrackQuality q;
     q.label = obj.value("label").toString();
-    q.path = canonicalLocalPath(obj.value("path").toString());
+    q.path = canonicalLocalPath(obj.value("path").toString(), baseDir);
     q.codec = obj.value("codec").toString();
     q.bitrate = obj.value("bitrate").toInt();
     q.sampleRate = obj.value("sampleRate").toInt();
@@ -166,21 +188,26 @@ QVariantMap Track::toVariantMap() const
 
 Track Track::fromJson(const QJsonObject &obj)
 {
+    return fromJson(obj, {});
+}
+
+Track Track::fromJson(const QJsonObject &obj, const QString &baseDir)
+{
     Track t;
     t.id = obj.value("id").toString();
     t.title = obj.value("title").toString();
     t.artist = obj.value("artist").toString();
     t.album = obj.value("album").toString();
     t.genre = obj.value("genre").toString();
-    t.coverPath = canonicalLocalPath(obj.value("cover").toString());
-    t.lyricPath = canonicalLocalPath(obj.value("lyrics").toString());
+    t.coverPath = canonicalLocalPath(obj.value("cover").toString(), baseDir);
+    t.lyricPath = canonicalLocalPath(obj.value("lyrics").toString(), baseDir);
     t.year = obj.value("year").toInt();
     t.disc = obj.value("disc").toInt(1);
     t.trackNo = obj.value("track").toInt();
 
     const QJsonArray arr = obj.value("qualities").toArray();
     for (const auto &v : arr) {
-        const auto q = TrackQuality::fromJson(v.toObject());
+        const auto q = TrackQuality::fromJson(v.toObject(), baseDir);
         if (!q.path.trimmed().isEmpty())
             t.qualities.push_back(q);
     }
@@ -194,4 +221,3 @@ QString stableTrackId(const Track &track)
     const QByteArray input = (track.normalizedKey() + QStringLiteral("\n") + track.primaryPath()).toUtf8();
     return QString::fromLatin1(QCryptographicHash::hash(input, QCryptographicHash::Sha1).toHex().left(16));
 }
-

@@ -1,0 +1,165 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build libssl-dev dpkg-dev
+
+      - name: Install Qt
+        id: qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.1
+          host: linux
+          target: desktop
+          arch: gcc_64
+          modules: qtmultimedia qtquickcontrols2
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_PREFIX_PATH=${{ steps.qt.outputs.qt-path }}
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Package DEB
+        run: |
+          cd build
+          cpack -G DEB -C Release
+          mv *.deb ../tnuxmusic-${{ github.ref_name }}-linux-amd64.deb
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-deb
+          path: tnuxmusic-${{ github.ref_name }}-linux-amd64.deb
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        id: qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.1
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: qtmultimedia qtquickcontrols2
+
+      - name: Install Windows packaging deps
+        shell: pwsh
+        run: |
+          choco install ninja innosetup -y
+          vcpkg install openssl:x64-windows
+
+      - name: Configure
+        shell: pwsh
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=x64-windows
+          -DCMAKE_PREFIX_PATH="${{ steps.qt.outputs.qt-path }}"
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release
+
+      - name: Install
+        shell: pwsh
+        run: cmake --install build --config Release --prefix stage
+
+      - name: Deploy Qt runtime
+        shell: pwsh
+        run: >
+          & "${{ steps.qt.outputs.qt-path }}\bin\windeployqt.exe"
+          --release --compiler-runtime
+          --qmldir "${{ github.workspace }}\qml"
+          --dir stage\bin
+          stage\bin\tnuxmusic.exe
+
+      - name: Package ZIP
+        shell: pwsh
+        run: Compress-Archive -Path stage\* -DestinationPath tnuxmusic-${{ github.ref_name }}-windows-x64.zip
+
+      - name: Package installer EXE
+        shell: pwsh
+        run: |
+          $iss = @"
+          [Setup]
+          AppId={{6A68A2DA-7ED0-4BB9-9368-71B16E23E40F}}
+          AppName=tnuxmusic
+          AppVersion=${{ github.ref_name }}
+          AppPublisher=tnuxmusic
+          DefaultDirName={autopf}\tnuxmusic
+          DefaultGroupName=tnuxmusic
+          OutputDir=.
+          OutputBaseFilename=tnuxmusic-${{ github.ref_name }}-windows-x64-setup
+          Compression=lzma
+          SolidCompression=yes
+          ArchitecturesAllowed=x64compatible
+          ArchitecturesInstallIn64BitMode=x64compatible
+
+          [Tasks]
+          Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
+
+          [Files]
+          Source: "stage\bin\*"; DestDir: "{app}\bin"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+          [Icons]
+          Name: "{group}\tnuxmusic"; Filename: "{app}\bin\tnuxmusic.exe"
+          Name: "{commondesktop}\tnuxmusic"; Filename: "{app}\bin\tnuxmusic.exe"; Tasks: desktopicon
+
+          [Run]
+          Filename: "{app}\bin\tnuxmusic.exe"; Description: "Launch tnuxmusic"; Flags: nowait postinstall skipifsilent
+          "@
+          Set-Content -Path installer.iss -Value $iss -Encoding UTF8
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-zip
+          path: |
+            tnuxmusic-${{ github.ref_name }}-windows-x64.zip
+            tnuxmusic-${{ github.ref_name }}-windows-x64-setup.exe
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs:
+      - build-linux
+      - build-windows
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: release-assets/*
+          generate_release_notes: true
