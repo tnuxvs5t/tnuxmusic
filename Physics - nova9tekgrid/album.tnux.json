@@ -3,6 +3,7 @@
   "album": "Physics",
   "artist": "nova9tekgrid",
   "genre": "Techno",
+  "cover": "cover.png",
   "tracks": [
     {
       "track": 1,
@@ -31,4 +32,3 @@
     }
   ]
 }
-
