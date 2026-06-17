@@ -24,8 +24,14 @@ qt_add_executable(tnuxmusic
     src/main.cpp
     src/Track.h
     src/Track.cpp
+    src/MetadataReader.h
+    src/MetadataReader.cpp
     src/LibraryManager.h
     src/LibraryManager.cpp
+    src/AlbumModel.h
+    src/AlbumModel.cpp
+    src/PlaybackQueue.h
+    src/PlaybackQueue.cpp
     src/PlayerController.h
     src/PlayerController.cpp
     src/TlyParser.h

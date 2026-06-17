@@ -9,6 +9,7 @@ class LyricModel : public QAbstractListModel {
     Q_PROPERTY(QString source READ source NOTIFY sourceChanged)
     Q_PROPERTY(int activeIndex READ activeIndex NOTIFY activeIndexChanged)
     Q_PROPERTY(QString title READ title NOTIFY sourceChanged)
+    Q_PROPERTY(qint64 position READ position NOTIFY positionChanged)
 
 public:
     enum Roles {
@@ -16,9 +17,12 @@ public:
         EndMsRole,
         TimeTextRole,
         TextRole,
+        RichTextRole,
         TranslationRole,
         TagsRole,
-        ActiveRole
+        ActiveRole,
+        ActiveWordRole,
+        ProgressRole
     };
     Q_ENUM(Roles)
 
@@ -31,6 +35,7 @@ public:
     QString source() const { return m_source; }
     int activeIndex() const { return m_activeIndex; }
     QString title() const { return m_doc.meta.value("title"); }
+    qint64 position() const { return m_positionMs; }
 
     Q_INVOKABLE QString loadFromFile(const QString &pathOrUrl);
     Q_INVOKABLE void clear();
@@ -39,12 +44,15 @@ public:
 signals:
     void sourceChanged();
     void activeIndexChanged();
+    void positionChanged();
 
 private:
     TlyDocument m_doc;
     QString m_source;
     int m_activeIndex = -1;
+    qint64 m_positionMs = 0;
 
-    void setActiveIndex(int index);
+    int findActiveIndex(qint64 ms) const;
+    int activeWordIndex(int lineIndex) const;
+    QString richTextFor(const TlyLine &line) const;
 };
-

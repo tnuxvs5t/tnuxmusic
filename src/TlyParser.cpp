@@ -44,6 +44,77 @@ static bool isTranslationAttrs(const QMap<QString, QString> &attrs, QString *lan
     return false;
 }
 
+static bool parseInlineTime(QString token, qint64 baseMs, qint64 *out)
+{
+    token = token.trimmed();
+    const bool relative = token.startsWith('+');
+    if (relative)
+        token.remove(0, 1);
+
+    bool ok = false;
+    qint64 ms = TlyParser::parseTimeMs(token, &ok);
+    if (!ok)
+        return false;
+    if (relative)
+        ms += baseMs;
+    *out = ms;
+    return true;
+}
+
+static QString parseLyricBody(const QString &body, qint64 lineStart, qint64 lineEnd, QVector<TlyWord> *words)
+{
+    if (words)
+        words->clear();
+
+    static const QRegularExpression markerRe(R"(<([^<>]+)>)");
+    struct Marker {
+        int begin = 0;
+        int end = 0;
+        qint64 time = 0;
+    };
+
+    QVector<Marker> markers;
+    auto it = markerRe.globalMatch(body);
+    while (it.hasNext()) {
+        const auto m = it.next();
+        qint64 ms = 0;
+        if (!parseInlineTime(m.captured(1), lineStart, &ms))
+            continue;
+        markers.push_back({int(m.capturedStart()), int(m.capturedEnd()), ms});
+    }
+
+    if (markers.isEmpty())
+        return body.simplified();
+
+    QString plain;
+    int cursor = 0;
+    for (const Marker &m : markers) {
+        plain += body.mid(cursor, m.begin - cursor);
+        cursor = m.end;
+    }
+    plain += body.mid(cursor);
+    plain = plain.simplified();
+
+    if (!words)
+        return plain;
+
+    for (int i = 0; i < markers.size(); ++i) {
+        const int textStart = markers[i].end;
+        const int textEnd = (i + 1 < markers.size()) ? markers[i + 1].begin : body.size();
+        QString segment = body.mid(textStart, textEnd - textStart);
+        if (segment.isEmpty())
+            continue;
+
+        TlyWord word;
+        word.startMs = markers[i].time;
+        word.endMs = (i + 1 < markers.size()) ? markers[i + 1].time - 1 : lineEnd;
+        word.text = segment;
+        words->push_back(word);
+    }
+
+    return plain;
+}
+
 TlyDocument TlyParser::parseFile(const QString &path, QString *error)
 {
     QFile f(path);
@@ -124,7 +195,7 @@ TlyDocument TlyParser::parseText(const QString &text, QString *error)
         TlyLine line;
         line.startMs = start;
         line.endMs = end;
-        line.text = body;
+        line.text = parseLyricBody(body, start, end, &line.words);
         for (auto it = attrs.begin(); it != attrs.end(); ++it)
             line.tags << (it.value() == "true" ? it.key() : it.key() + "=" + it.value());
         doc.lines.push_back(line);
@@ -140,6 +211,10 @@ TlyDocument TlyParser::parseText(const QString &text, QString *error)
     for (int i = 0; i < doc.lines.size(); ++i) {
         if (doc.lines[i].endMs < 0 && i + 1 < doc.lines.size())
             doc.lines[i].endMs = std::max<qint64>(doc.lines[i].startMs, doc.lines[i + 1].startMs - 1);
+        for (auto &word : doc.lines[i].words) {
+            if (word.endMs < 0)
+                word.endMs = doc.lines[i].endMs;
+        }
     }
 
     if (error && error->isEmpty())
@@ -206,4 +281,3 @@ QString TlyParser::formatTime(qint64 ms)
         .arg(sec, 2, 10, QLatin1Char('0'))
         .arg(msec, 3, 10, QLatin1Char('0'));
 }
-

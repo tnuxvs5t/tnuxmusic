@@ -38,6 +38,9 @@ public:
     int count() const { return m_tracks.size(); }
     QString libraryPath() const { return m_libraryPath; }
     QString lastMessage() const { return m_lastMessage; }
+    const QVector<Track> &tracks() const { return m_tracks; }
+    const Track *trackAt(int row) const;
+    int rowOfId(const QString &id) const;
 
     Q_INVOKABLE QString loadDefault();
     Q_INVOKABLE QString save();
@@ -46,6 +49,7 @@ public:
     Q_INVOKABLE QString mergeLibrary(const QString &fileUrl);
     Q_INVOKABLE QString exportLibrary(const QString &fileUrl) const;
     Q_INVOKABLE QVariantMap track(int row) const;
+    Q_INVOKABLE int rowOfTrackId(const QString &id) const;
     Q_INVOKABLE QString primaryPath(int row) const;
     Q_INVOKABLE QString lyricPath(int row) const;
     Q_INVOKABLE QString coverPath(int row) const;
@@ -71,4 +75,3 @@ private:
     void mergeTrack(const Track &track);
     Track inferTrackFromAudioFile(const QString &path) const;
 };
-

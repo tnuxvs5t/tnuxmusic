@@ -5,10 +5,17 @@
 #include <QStringList>
 #include <QVector>
 
+struct TlyWord {
+    qint64 startMs = 0;
+    qint64 endMs = -1;
+    QString text;
+};
+
 struct TlyLine {
     qint64 startMs = 0;
     qint64 endMs = -1;
     QString text;
+    QVector<TlyWord> words;
     QMap<QString, QString> translations;
     QStringList tags;
 };
@@ -25,4 +32,3 @@ public:
     static qint64 parseTimeMs(const QString &text, bool *ok = nullptr);
     static QString formatTime(qint64 ms);
 };
-

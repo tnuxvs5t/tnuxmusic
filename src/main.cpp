@@ -1,5 +1,7 @@
+#include "AlbumModel.h"
 #include "LibraryManager.h"
 #include "LyricModel.h"
+#include "PlaybackQueue.h"
 #include "PlayerController.h"
 #include "ScriptBridge.h"
 
@@ -14,6 +16,8 @@ int main(int argc, char *argv[])
     QCoreApplication::setApplicationName("tnuxmusic");
 
     LibraryManager library;
+    AlbumModel albums(&library);
+    PlaybackQueue queue(&library);
     PlayerController player;
     LyricModel lyrics;
     ScriptBridge scripts(&library);
@@ -26,6 +30,8 @@ int main(int argc, char *argv[])
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("libraryManager", &library);
+    engine.rootContext()->setContextProperty("albumModel", &albums);
+    engine.rootContext()->setContextProperty("queueModel", &queue);
     engine.rootContext()->setContextProperty("playerController", &player);
     engine.rootContext()->setContextProperty("lyricModel", &lyrics);
     engine.rootContext()->setContextProperty("scriptBridge", &scripts);
@@ -37,4 +43,3 @@ int main(int argc, char *argv[])
 
     return app.exec();
 }
-

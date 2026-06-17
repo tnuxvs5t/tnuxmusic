@@ -47,3 +47,17 @@ JS 脚本规则：
 - 或定义 `function organize(library) { return library }`；
 - 返回值必须仍是上面的曲库对象。
 
+## tag 读取
+
+扫描曲库时当前会读取：
+
+- MP3：ID3v2 `TIT2/TPE1/TALB/TCON/TRCK/TPOS/TDRC/TYER`
+- FLAC：Vorbis Comment `TITLE/ARTIST/ALBUM/GENRE/TRACKNUMBER/DISCNUMBER/DATE/YEAR`
+
+若 tag 缺失，则回退到目录结构：
+
+```text
+Artist/Album/Song.ext
+```
+
+歌单保存在应用数据目录的 `playlists.json`，内部使用曲目的稳定 `id` 引用曲库。

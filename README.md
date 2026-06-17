@@ -21,6 +21,11 @@
 - JS 曲库整理脚本；
 - 播放、暂停、进度、音量；
 - `.tly` 动态歌词滚动和翻译显示。
+- 播放队列、上一首 / 下一首、自动续播；
+- 本地歌单保存、加载、追加、删除；
+- 专辑墙与专辑详情；
+- MP3 ID3v2 / FLAC Vorbis Comment 基础 tag 读取；
+- `.tly` 逐字时间轴高亮。
 
 ## 构建
 
@@ -42,3 +47,14 @@ Qt 路径默认使用：
 - TLY 歌词格式：[`docs/TLY_FORMAT.md`](docs/TLY_FORMAT.md)
 - JS 示例：[`scripts/normalize_album.js`](scripts/normalize_album.js)
 - TLY 示例：[`examples/demo.tly`](examples/demo.tly)
+
+## TLY 逐字高亮
+
+行内可以使用绝对或相对时间标记：
+
+```tly
+[00:12.000]<00:12.000>逐<00:12.250>字<00:12.520>高亮
+[00:16.000]<+00:00.000>相<+00:00.180>对<+00:00.360>时间
+```
+
+相对时间以当前歌词行开始时间为基准。

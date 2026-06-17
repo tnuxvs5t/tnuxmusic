@@ -1,5 +1,7 @@
 #include "LibraryManager.h"
 
+#include "MetadataReader.h"
+
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -240,11 +242,32 @@ QString LibraryManager::exportLibrary(const QString &fileUrl) const
     return QStringLiteral("已导出曲库：%1").arg(path);
 }
 
+const Track *LibraryManager::trackAt(int row) const
+{
+    if (row < 0 || row >= m_tracks.size())
+        return nullptr;
+    return &m_tracks[row];
+}
+
+int LibraryManager::rowOfId(const QString &id) const
+{
+    for (int i = 0; i < m_tracks.size(); ++i) {
+        if (m_tracks[i].id == id)
+            return i;
+    }
+    return -1;
+}
+
 QVariantMap LibraryManager::track(int row) const
 {
     if (row < 0 || row >= m_tracks.size())
         return {};
     return m_tracks[row].toVariantMap();
+}
+
+int LibraryManager::rowOfTrackId(const QString &id) const
+{
+    return rowOfId(id);
 }
 
 QString LibraryManager::primaryPath(int row) const
@@ -395,6 +418,10 @@ void LibraryManager::mergeTrack(const Track &track)
             t.genre = track.genre;
         if (t.year == 0)
             t.year = track.year;
+        if (t.trackNo == 0)
+            t.trackNo = track.trackNo;
+        if (t.disc <= 1)
+            t.disc = track.disc;
         if (t.id.isEmpty())
             t.id = stableTrackId(t);
         return;
@@ -410,11 +437,18 @@ Track LibraryManager::inferTrackFromAudioFile(const QString &path) const
 {
     const QFileInfo info(path);
     Track t;
-    t.title = cleanTitle(info.completeBaseName());
-    t.album = info.dir().dirName();
+    const AudioMetadata meta = MetadataReader::read(path);
+
+    t.title = meta.title.isEmpty() ? cleanTitle(info.completeBaseName()) : meta.title;
+    t.album = meta.album.isEmpty() ? info.dir().dirName() : meta.album;
+    t.artist = meta.artist;
+    t.genre = meta.genre;
+    t.year = meta.year;
+    t.trackNo = meta.trackNo;
+    t.disc = meta.disc > 0 ? meta.disc : 1;
 
     QDir artistDir = info.dir();
-    if (artistDir.cdUp())
+    if (t.artist.isEmpty() && artistDir.cdUp())
         t.artist = artistDir.dirName();
 
     TrackQuality q;
@@ -428,4 +462,3 @@ Track LibraryManager::inferTrackFromAudioFile(const QString &path) const
     t.id = stableTrackId(t);
     return t;
 }
-

@@ -37,6 +37,7 @@ signals:
     void volumeChanged();
     void sourceChanged();
     void errorTextChanged();
+    void finished();
 
 private:
     QMediaPlayer m_player;
@@ -46,4 +47,3 @@ private:
 
     void setErrorText(const QString &text);
 };
-

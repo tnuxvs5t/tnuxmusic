@@ -16,6 +16,10 @@ PlayerController::PlayerController(QObject *parent)
     connect(&m_player, &QMediaPlayer::positionChanged, this, &PlayerController::positionChanged);
     connect(&m_player, &QMediaPlayer::durationChanged, this, &PlayerController::durationChanged);
     connect(&m_player, &QMediaPlayer::playbackStateChanged, this, &PlayerController::playingChanged);
+    connect(&m_player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
+        if (status == QMediaPlayer::EndOfMedia)
+            emit finished();
+    });
     connect(&m_player, &QMediaPlayer::errorOccurred, this, [this](QMediaPlayer::Error, const QString &errorString) {
         setErrorText(errorString);
     });
