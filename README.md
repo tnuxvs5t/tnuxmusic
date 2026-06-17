@@ -55,7 +55,18 @@ Qt 路径默认使用：
 - 曲库格式：[`docs/LIBRARY_SCHEMA.md`](docs/LIBRARY_SCHEMA.md)
 - TLY 歌词格式：[`docs/TLY_FORMAT.md`](docs/TLY_FORMAT.md)
 - JS 示例：[`scripts/normalize_album.js`](scripts/normalize_album.js)
+- LRC 转 TLY：[`scripts/lrc_to_tly.js`](scripts/lrc_to_tly.js)
+- 合并导入曲库：[`scripts/merge_import_library.js`](scripts/merge_import_library.js)
 - TLY 示例：[`examples/demo.tly`](examples/demo.tly)
+
+## JS 处理本地 LRC
+
+```bash
+node scripts/lrc_to_tly.js "/path/to/song.mp3" --album "Desktop LRC Test" --genre Rap --write
+node scripts/merge_import_library.js "/path/to/song.tnux.import.json" "$HOME/.local/share/tnux/tnuxmusic/library.json"
+```
+
+第一个脚本会把同名 `.lrc` 转成 `.tly`，同时生成一个可导入的曲库 JSON。
 
 ## TLY 逐字高亮
 
