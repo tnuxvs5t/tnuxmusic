@@ -54,12 +54,6 @@ qt_add_qml_module(tnuxmusic
         qml/Main.qml
 )
 
-qt_generate_deploy_qml_app_script(
-    TARGET tnuxmusic
-    OUTPUT_SCRIPT deploy_script
-    NO_UNSUPPORTED_PLATFORM_ERROR
-)
-
 target_link_libraries(tnuxmusic PRIVATE
     Qt6::Core
     Qt6::Gui
@@ -78,7 +72,6 @@ install(TARGETS tnuxmusic
     BUNDLE DESTINATION .
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
-install(SCRIPT ${deploy_script})
 
 if(UNIX AND NOT APPLE)
     set(CPACK_PACKAGE_NAME "tnuxmusic")
@@ -89,7 +82,7 @@ if(UNIX AND NOT APPLE)
     set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
     set(CPACK_GENERATOR "DEB")
     set(CPACK_DEBIAN_PACKAGE_MAINTAINER "tnuxmusic")
-    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)
     set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
 endif()
 
