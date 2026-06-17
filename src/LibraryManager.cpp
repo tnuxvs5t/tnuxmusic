@@ -15,6 +15,7 @@
 #include <QIODevice>
 #include <QCryptographicHash>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QSet>
 #include <QStandardPaths>
 #include <QTextStream>
@@ -153,6 +154,51 @@ static QString zipSafeName(QString name)
         safe << part;
     }
     return safe.join('/');
+}
+
+static QString imageExtForData(const QByteArray &data, const QString &mimeType = {})
+{
+    const QString mime = mimeType.trimmed().toLower();
+    if (mime == "image/jpeg" || mime == "image/jpg")
+        return QStringLiteral("jpg");
+    if (mime == "image/png")
+        return QStringLiteral("png");
+    if (mime == "image/webp")
+        return QStringLiteral("webp");
+    if (mime == "image/bmp")
+        return QStringLiteral("bmp");
+    if (data.startsWith(QByteArray("\xff\xd8", 2)))
+        return QStringLiteral("jpg");
+    if (data.startsWith(QByteArray("\x89PNG\r\n\x1a\n", 8)))
+        return QStringLiteral("png");
+    if (data.startsWith("RIFF") && data.mid(8, 4) == "WEBP")
+        return QStringLiteral("webp");
+    if (data.startsWith("BM"))
+        return QStringLiteral("bmp");
+    return QStringLiteral("jpg");
+}
+
+static QString writeEmbeddedCoverSidecar(const QFileInfo &audio, const AudioMetadata &meta)
+{
+    if (meta.coverData.isEmpty())
+        return {};
+
+    const QString ext = imageExtForData(meta.coverData.left(16), meta.coverMimeType);
+    const QString path = audio.dir().filePath(audio.completeBaseName() + QStringLiteral(".cover.") + ext);
+    const QFileInfo coverInfo(path);
+    if (coverInfo.exists() && coverInfo.size() > 0 && coverInfo.lastModified() >= audio.lastModified())
+        return canonicalLocalPath(path);
+
+    QSaveFile out(path);
+    if (!out.open(QIODevice::WriteOnly))
+        return {};
+    if (out.write(meta.coverData) != meta.coverData.size()) {
+        out.cancelWriting();
+        return {};
+    }
+    if (!out.commit())
+        return {};
+    return canonicalLocalPath(path);
 }
 
 static QString libraryImportCacheRoot()
@@ -730,6 +776,36 @@ static QString findSidecar(const QFileInfo &audio, const QStringList &suffixes, 
             return canonicalLocalPath(sameStemCover);
     }
 
+    for (const QString &base : baseNames) {
+        for (const QString &ext : suffixes) {
+            const QString candidate = dir.filePath(base + "." + ext);
+            if (QFileInfo::exists(candidate))
+                return canonicalLocalPath(candidate);
+        }
+    }
+    return {};
+}
+
+static QString findSameStemSidecar(const QFileInfo &audio, const QStringList &suffixes)
+{
+    const QDir dir = audio.dir();
+    const QString stem = audio.completeBaseName();
+
+    for (const QString &ext : suffixes) {
+        const QString sameStem = dir.filePath(stem + "." + ext);
+        if (QFileInfo::exists(sameStem))
+            return canonicalLocalPath(sameStem);
+
+        const QString sameStemCover = dir.filePath(stem + ".cover." + ext);
+        if (QFileInfo::exists(sameStemCover))
+            return canonicalLocalPath(sameStemCover);
+    }
+    return {};
+}
+
+static QString findNamedSidecar(const QFileInfo &audio, const QStringList &suffixes, const QStringList &baseNames)
+{
+    const QDir dir = audio.dir();
     for (const QString &base : baseNames) {
         for (const QString &ext : suffixes) {
             const QString candidate = dir.filePath(base + "." + ext);
@@ -1455,7 +1531,13 @@ Track LibraryManager::inferTrackFromAudioFile(const QString &path) const
     q.label = qualityLabelFor(info);
     t.qualities.push_back(q);
 
-    t.coverPath = sidecar.coverPath.isEmpty() ? findSidecar(info, kImageExt, kCoverNames) : sidecar.coverPath;
+    t.coverPath = sidecar.coverPath;
+    if (t.coverPath.isEmpty())
+        t.coverPath = findSameStemSidecar(info, kImageExt);
+    if (t.coverPath.isEmpty())
+        t.coverPath = writeEmbeddedCoverSidecar(info, meta);
+    if (t.coverPath.isEmpty())
+        t.coverPath = findNamedSidecar(info, kImageExt, kCoverNames);
     t.lyricPath = findSidecar(info, {"tly"}, {});
     if (t.lyricPath.isEmpty())
         t.lyricPath = convertLrcToTly(info, t);

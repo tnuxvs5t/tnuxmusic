@@ -216,10 +216,15 @@ QString detectImageExt(const QByteArray &head)
 QString uniqueOutputPath(const QFileInfo &input, const QString &ext)
 {
     const QDir dir = input.dir();
-    QString path = dir.filePath(input.completeBaseName() + QLatin1Char('.') + ext);
-    if (QFileInfo(path).absoluteFilePath() != input.absoluteFilePath())
-        return path;
-    return dir.filePath(input.completeBaseName() + QStringLiteral(".decoded.") + ext);
+    const QString preferred = dir.filePath(input.completeBaseName() + QLatin1Char('.') + ext);
+    const QFileInfo preferredInfo(preferred);
+    if (preferredInfo.absoluteFilePath() != input.absoluteFilePath() && !preferredInfo.exists())
+        return preferred;
+
+    QString fallback = dir.filePath(input.completeBaseName() + QStringLiteral(".decoded.") + ext);
+    if (QFileInfo(fallback).absoluteFilePath() != input.absoluteFilePath())
+        return fallback;
+    return dir.filePath(input.completeBaseName() + QStringLiteral(".open.") + ext);
 }
 
 void writeCoverSidecar(const QFileInfo &input, const QByteArray &cover)
@@ -297,7 +302,6 @@ NcmImportResult NcmImportService::convertToOpenAudio(const QString &inputPath)
     const QByteArray cover = coverSize > 0 ? in.read(coverSize) : QByteArray();
     if (cover.size() != int(coverSize))
         return fail(QStringLiteral("NCM cover payload is truncated: %1").arg(inputInfo.fileName()));
-    writeCoverSidecar(inputInfo, cover);
 
     const qint64 audioOffset = in.pos();
     QByteArray firstChunk = in.read(kChunkSize);
@@ -316,6 +320,7 @@ NcmImportResult NcmImportService::convertToOpenAudio(const QString &inputPath)
     const QString outputPath = uniqueOutputPath(inputInfo, ext);
     const QFileInfo outputInfo(outputPath);
     if (outputInfo.exists() && outputInfo.size() > 0 && outputInfo.lastModified() >= inputInfo.lastModified()) {
+        writeCoverSidecar(outputInfo, cover);
         NcmImportResult result;
         result.status = NcmImportResult::Status::Converted;
         result.outputAudioPath = outputInfo.absoluteFilePath();
@@ -345,6 +350,7 @@ NcmImportResult NcmImportService::convertToOpenAudio(const QString &inputPath)
 
     if (!out.commit())
         return fail(QStringLiteral("Cannot finalize output audio: %1").arg(outputPath));
+    writeCoverSidecar(QFileInfo(outputPath), cover);
 
     NcmImportResult result;
     result.status = NcmImportResult::Status::Converted;
