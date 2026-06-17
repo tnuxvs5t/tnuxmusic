@@ -1,0 +1,9 @@
+build/
+.qt/
+*.user
+*.autosave
+*.swp
+*.swo
+*.tmp
+*.log
+

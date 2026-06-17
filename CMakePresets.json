@@ -1,0 +1,36 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "qt6-debug",
+      "displayName": "Qt 6.11 Debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/qt6-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_PREFIX_PATH": "/home/tnuzy/Qt/6.11.1/gcc_64"
+      }
+    },
+    {
+      "name": "qt6-release",
+      "displayName": "Qt 6.11 Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/qt6-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_PREFIX_PATH": "/home/tnuzy/Qt/6.11.1/gcc_64"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "qt6-debug",
+      "configurePreset": "qt6-debug"
+    },
+    {
+      "name": "qt6-release",
+      "configurePreset": "qt6-release"
+    }
+  ]
+}
+

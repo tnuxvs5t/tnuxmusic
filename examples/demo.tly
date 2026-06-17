@@ -1,0 +1,11 @@
+@title = Demo Song
+@artist = tnuxmusic
+@lang = zh-CN
+
+[00:00.000 --> 00:03.000]这是第一句主歌词
+[00:00.000|tr=en]This is the first lyric line
+[00:03.000 --> 00:07.500|verse=1]这里可以标注段落、情绪、角色或任意标签
+[00:03.000|tr=en]Tags may describe verse, mood, speaker, or any custom marker
+[00:07.500]没有结束时间时，下一句开始前会自动结束
+[00:11.000|tr=en]When no end time is provided, the next line closes the previous one
+

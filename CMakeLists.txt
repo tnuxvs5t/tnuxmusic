@@ -1,0 +1,58 @@
+cmake_minimum_required(VERSION 3.24)
+
+project(tnuxmusic VERSION 0.1.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_AUTOMOC ON)
+
+find_package(Qt6 6.5 REQUIRED COMPONENTS
+    Core
+    Gui
+    Quick
+    QuickControls2
+    Multimedia
+    Qml
+)
+
+qt_standard_project_setup(REQUIRES 6.5)
+
+set_source_files_properties(qml/Main.qml PROPERTIES QT_RESOURCE_ALIAS Main.qml)
+
+qt_add_executable(tnuxmusic
+    src/main.cpp
+    src/Track.h
+    src/Track.cpp
+    src/LibraryManager.h
+    src/LibraryManager.cpp
+    src/PlayerController.h
+    src/PlayerController.cpp
+    src/TlyParser.h
+    src/TlyParser.cpp
+    src/LyricModel.h
+    src/LyricModel.cpp
+    src/ScriptBridge.h
+    src/ScriptBridge.cpp
+)
+
+qt_add_qml_module(tnuxmusic
+    URI TnuxMusic
+    VERSION 1.0
+    QML_FILES
+        qml/Main.qml
+)
+
+target_link_libraries(tnuxmusic PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Quick
+    Qt6::QuickControls2
+    Qt6::Multimedia
+    Qt6::Qml
+)
+
+install(TARGETS tnuxmusic
+    BUNDLE DESTINATION .
+    RUNTIME DESTINATION bin
+)
