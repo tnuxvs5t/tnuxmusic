@@ -68,6 +68,27 @@ node scripts/merge_import_library.js "/path/to/song.tnux.import.json" "$HOME/.lo
 
 第一个脚本会把同名 `.lrc` 转成 `.tly`，同时生成一个可导入的曲库 JSON。
 
+`lrc_to_tly.js` 会优先读取 MP3 的 ID3v2：
+
+- `TIT2` 标题；
+- `TPE1` 艺术家；
+- `TALB` 专辑名；
+- `TCON` 风格；
+- `APIC` 内嵌封面，并导出为同名 `.cover.jpg/.png`。
+
+也可以传入翻译 JSON 生成 TLY 翻译行：
+
+```bash
+node scripts/lrc_to_tly.js "/path/to/song.mp3" --translation-json "/path/to/song.zh-CN.json" --write
+```
+
+生成的 `.tly` 会包含：
+
+```tly
+[00:12.000]原文
+[00:12.000|tr=zh-CN]中文翻译
+```
+
 ## TLY 逐字高亮
 
 行内可以使用绝对或相对时间标记：

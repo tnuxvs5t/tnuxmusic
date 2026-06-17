@@ -26,8 +26,23 @@ const library = fs.existsSync(libraryPath)
 
 let added = 0;
 let replaced = 0;
+let replacedByPath = 0;
+const incomingByPath = new Map();
+
+function primaryPath(track) {
+  return track && track.qualities && track.qualities[0] && track.qualities[0].path
+    ? path.resolve(track.qualities[0].path)
+    : "";
+}
+
 for (const track of incoming.tracks || []) {
-  const pos = library.tracks.findIndex(t => t.id === track.id);
+  const incomingPath = primaryPath(track);
+  if (incomingPath) incomingByPath.set(incomingPath, track.id);
+  let pos = library.tracks.findIndex(t => t.id === track.id);
+  if (pos < 0 && incomingPath) {
+    pos = library.tracks.findIndex(t => primaryPath(t) === incomingPath);
+    if (pos >= 0) replacedByPath++;
+  }
   if (pos >= 0) {
     library.tracks[pos] = track;
     replaced++;
@@ -37,6 +52,14 @@ for (const track of incoming.tracks || []) {
   }
 }
 
+const beforeDedupe = library.tracks.length;
+library.tracks = library.tracks.filter(track => {
+  const p = primaryPath(track);
+  if (!p || !incomingByPath.has(p)) return true;
+  return track.id === incomingByPath.get(p);
+});
+const dedupedByPath = beforeDedupe - library.tracks.length;
+
 fs.mkdirSync(path.dirname(libraryPath), { recursive: true });
 fs.writeFileSync(libraryPath, JSON.stringify(library, null, 4) + "\n", "utf8");
 
@@ -45,6 +68,7 @@ console.log(JSON.stringify({
   libraryPath,
   added,
   replaced,
+  replacedByPath,
+  dedupedByPath,
   total: library.tracks.length
 }, null, 2));
-

@@ -235,14 +235,29 @@ ApplicationWindow {
             AccentButton { text: "JS 整理"; onClicked: scriptDialog.open() }
         }
 
-        RowLayout {
+        SplitView {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: 14
+            orientation: Qt.Horizontal
+
+            handle: Rectangle {
+                implicitWidth: 10
+                implicitHeight: 10
+                color: SplitHandle.pressed ? root.accent : (SplitHandle.hovered ? "#35505a" : "#16262e")
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 2
+                    height: parent.height * 0.45
+                    radius: 1
+                    color: SplitHandle.pressed || SplitHandle.hovered ? "#d8fffb" : "#48636d"
+                    opacity: 0.8
+                }
+            }
 
             Card {
-                Layout.preferredWidth: 230
-                Layout.fillHeight: true
+                SplitView.preferredWidth: 230
+                SplitView.minimumWidth: 170
+                SplitView.maximumWidth: 340
 
                 ColumnLayout {
                     anchors.fill: parent
@@ -294,8 +309,8 @@ ApplicationWindow {
 
             StackLayout {
                 id: pages
-                Layout.fillWidth: true
-                Layout.fillHeight: true
+                SplitView.fillWidth: true
+                SplitView.minimumWidth: 560
                 currentIndex: currentTab
 
                 Card {
@@ -619,8 +634,9 @@ ApplicationWindow {
             }
 
             Card {
-                Layout.preferredWidth: 410
-                Layout.fillHeight: true
+                SplitView.preferredWidth: 410
+                SplitView.minimumWidth: 310
+                SplitView.maximumWidth: 660
 
                 ColumnLayout {
                     anchors.fill: parent
