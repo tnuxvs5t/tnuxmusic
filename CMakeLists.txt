@@ -24,6 +24,8 @@ qt_add_executable(tnuxmusic
     src/main.cpp
     src/Track.h
     src/Track.cpp
+    src/NcmImportService.h
+    src/NcmImportService.cpp
     src/MetadataReader.h
     src/MetadataReader.cpp
     src/LibraryManager.h

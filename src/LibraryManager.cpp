@@ -1,6 +1,7 @@
 #include "LibraryManager.h"
 
 #include "MetadataReader.h"
+#include "NcmImportService.h"
 
 #include <QDir>
 #include <QDirIterator>
@@ -506,6 +507,9 @@ QString LibraryManager::scanFolder(const QString &folderUrl)
     int addedBefore = m_tracks.size();
     int audioFiles = 0;
     int ncmFiles = 0;
+    int ncmConverted = 0;
+    int ncmFailed = 0;
+    int ncmUnsupported = 0;
     beginResetModel();
     QDirIterator it(folder, QDir::Files | QDir::Readable, QDirIterator::Subdirectories);
     while (it.hasNext()) {
@@ -514,6 +518,23 @@ QString LibraryManager::scanFolder(const QString &folderUrl)
         const QString ext = info.suffix().toLower();
         if (kEncryptedExt.contains(ext)) {
             ++ncmFiles;
+            const NcmImportResult converted = NcmImportService::convertToOpenAudio(path);
+            if (converted.status == NcmImportResult::Status::Converted &&
+                !converted.outputAudioPath.trimmed().isEmpty() &&
+                QFileInfo::exists(converted.outputAudioPath)) {
+                const QFileInfo outInfo(converted.outputAudioPath);
+                if (kAudioExt.contains(outInfo.suffix().toLower())) {
+                    ++ncmConverted;
+                    ++audioFiles;
+                    mergeTrack(inferTrackFromAudioFile(converted.outputAudioPath));
+                } else {
+                    ++ncmFailed;
+                }
+            } else if (converted.status == NcmImportResult::Status::Failed) {
+                ++ncmFailed;
+            } else {
+                ++ncmUnsupported;
+            }
             continue;
         }
         if (!kAudioExt.contains(ext))
@@ -530,7 +551,11 @@ QString LibraryManager::scanFolder(const QString &folderUrl)
     QString msg = QStringLiteral("扫描完成：发现 %1 个音频文件，新增 %2 首，曲库共 %3 首")
                       .arg(audioFiles).arg(added).arg(m_tracks.size());
     if (ncmFiles > 0) {
-        msg += QStringLiteral("；跳过 %1 个 NCM 加密文件（不内置解密/绕过 DRM）").arg(ncmFiles);
+        msg += QStringLiteral("；NCM %1 个：转换 %2，未处理 %3，失败 %4")
+                   .arg(ncmFiles)
+                   .arg(ncmConverted)
+                   .arg(ncmUnsupported)
+                   .arg(ncmFailed);
     }
     setLastMessage(msg);
     return m_lastMessage;

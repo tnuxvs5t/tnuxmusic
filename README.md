@@ -29,7 +29,7 @@
 - MP3 ID3v2 / FLAC Vorbis Comment 基础 tag 读取；
 - `.tly` 逐字时间轴高亮。
 - 扫描音乐时自动把同名 `.lrc` 转成 `.tly`；
-- 扫描时识别 `.ncm`，但不内置解密器，会跳过并提示。
+- 扫描时识别 `.ncm`，并预留可插拔处理接口。
 
 ## 构建
 
@@ -99,9 +99,24 @@ node scripts/lrc_to_tly.js "/path/to/song.mp3" --translation-json "/path/to/song
 - 优先使用同名 `.tly`；
 - 如果没有 `.tly` 但有同名 `.lrc`，自动生成 `.tly`；
 - 如果旁边存在同名 `.zh-CN.json` 翻译数组，也会写入 `tr=zh-CN` 行；
-- 发现 `.ncm` 会统计并跳过。
+- 发现 `.ncm` 会调用预留处理接口；
+- 默认接口为空实现，只统计为“未处理”；
+- 如果你实现接口并返回普通音频路径，扫描器会继续把输出音频纳入曲库。
 
-`.ncm` 是网易云音乐的专有加密容器。公开资料和第三方工具通常将其描述为需要解密/转换为 MP3 或 FLAC 的格式；本项目不内置绕过平台加密/DRM 的自动解密器。请使用你有权使用的普通音频文件导入。
+NCM 扩展点在：
+
+```text
+src/NcmImportService.h
+src/NcmImportService.cpp
+```
+
+你只需要实现：
+
+```cpp
+NcmImportResult NcmImportService::convertToOpenAudio(const QString &inputPath)
+```
+
+成功时返回 `Status::Converted`，并把 `outputAudioPath` 设为生成的普通音频文件路径。
 
 ## TLY 逐字高亮
 
