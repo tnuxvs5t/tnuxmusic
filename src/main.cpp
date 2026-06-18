@@ -6,6 +6,7 @@
 #include "ScriptBridge.h"
 
 #include <QGuiApplication>
+#include <QIcon>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 
@@ -14,6 +15,7 @@ int main(int argc, char *argv[])
     QGuiApplication app(argc, argv);
     QCoreApplication::setOrganizationName("tnux");
     QCoreApplication::setApplicationName("tnuxmusic");
+    app.setWindowIcon(QIcon(QStringLiteral(":/icons/tnuxmusic-256.png")));
 
     LibraryManager library;
     AlbumModel albums(&library);

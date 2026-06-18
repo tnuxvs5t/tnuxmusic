@@ -18,7 +18,7 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build libssl-dev dpkg-dev
+          sudo apt-get install -y build-essential cmake ninja-build libssl-dev dpkg-dev file
 
       - name: Install Qt
         id: qt
@@ -39,17 +39,14 @@ jobs:
       - name: Build
         run: cmake --build build --config Release
 
-      - name: Package DEB
-        run: |
-          cd build
-          cpack -G DEB -C Release
-          mv *.deb ../tnuxmusic-${{ github.ref_name }}-linux-amd64.deb
+      - name: Package self-contained DEB
+        run: bash scripts/package_linux_deb.sh build "${{ steps.qt.outputs.qt-path }}" "${{ github.ref_name }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: linux-deb
-          path: tnuxmusic-${{ github.ref_name }}-linux-amd64.deb
+          path: dist/tnuxmusic-${{ github.ref_name }}-linux-amd64.deb
 
   build-windows:
     runs-on: windows-latest
@@ -119,6 +116,7 @@ jobs:
           DefaultGroupName=tnuxmusic
           OutputDir=.
           OutputBaseFilename=tnuxmusic-${{ github.ref_name }}-windows-x64-setup
+          SetupIconFile=${{ github.workspace }}\assets\icons\tnuxmusic.ico
           Compression=lzma
           SolidCompression=yes
           ArchitecturesAllowed=x64compatible

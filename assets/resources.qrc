@@ -1,0 +1,12 @@
+<RCC>
+  <qresource prefix="/icons">
+    <file alias="tnuxmusic-16.png">icons/tnuxmusic-16.png</file>
+    <file alias="tnuxmusic-24.png">icons/tnuxmusic-24.png</file>
+    <file alias="tnuxmusic-32.png">icons/tnuxmusic-32.png</file>
+    <file alias="tnuxmusic-48.png">icons/tnuxmusic-48.png</file>
+    <file alias="tnuxmusic-64.png">icons/tnuxmusic-64.png</file>
+    <file alias="tnuxmusic-128.png">icons/tnuxmusic-128.png</file>
+    <file alias="tnuxmusic-256.png">icons/tnuxmusic-256.png</file>
+    <file alias="tnuxmusic-512.png">icons/tnuxmusic-512.png</file>
+  </qresource>
+</RCC>

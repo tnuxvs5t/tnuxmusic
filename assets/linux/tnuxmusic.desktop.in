@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=tnuxmusic
+Comment=Local music player with NCM import and TLY lyrics
+Exec=tnuxmusic
+Icon=tnuxmusic
+Terminal=false
+Categories=Audio;Music;Player;AudioVideo;
+StartupWMClass=tnuxmusic

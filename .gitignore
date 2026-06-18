@@ -1,4 +1,5 @@
 build/
+dist/
 .qt/
 *.user
 *.autosave
@@ -6,4 +7,3 @@ build/
 *.swo
 *.tmp
 *.log
-

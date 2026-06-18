@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS
     Core
@@ -23,8 +24,27 @@ qt_standard_project_setup(REQUIRES 6.5)
 
 set_source_files_properties(qml/Main.qml PROPERTIES QT_RESOURCE_ALIAS Main.qml)
 
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/assets/linux/tnuxmusic.desktop.in
+    ${CMAKE_CURRENT_BINARY_DIR}/tnuxmusic.desktop
+    @ONLY
+)
+
+set(TNUXMUSIC_PLATFORM_SOURCES)
+if(WIN32)
+    enable_language(RC)
+    file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/tnuxmusic.ico" TNUXMUSIC_ICO_PATH)
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/assets/windows/tnuxmusic.rc.in
+        ${CMAKE_CURRENT_BINARY_DIR}/tnuxmusic.rc
+        @ONLY
+    )
+    list(APPEND TNUXMUSIC_PLATFORM_SOURCES ${CMAKE_CURRENT_BINARY_DIR}/tnuxmusic.rc)
+endif()
+
 qt_add_executable(tnuxmusic
     src/main.cpp
+    ${TNUXMUSIC_PLATFORM_SOURCES}
     src/Track.h
     src/Track.cpp
     src/NcmImportService.h
@@ -45,6 +65,7 @@ qt_add_executable(tnuxmusic
     src/LyricModel.cpp
     src/ScriptBridge.h
     src/ScriptBridge.cpp
+    assets/resources.qrc
 )
 
 qt_add_qml_module(tnuxmusic
@@ -72,6 +93,21 @@ install(TARGETS tnuxmusic
     BUNDLE DESTINATION .
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+
+if(UNIX AND NOT APPLE)
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/tnuxmusic.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+    install(FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/tnuxmusic.svg
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps
+        RENAME tnuxmusic.svg
+    )
+    foreach(size 16 24 32 48 64 128 256 512)
+        install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/tnuxmusic-${size}.png
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${size}x${size}/apps
+            RENAME tnuxmusic.png
+        )
+    endforeach()
+endif()
 
 if(UNIX AND NOT APPLE)
     set(CPACK_PACKAGE_NAME "tnuxmusic")
