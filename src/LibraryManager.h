@@ -10,6 +10,7 @@ class LibraryManager : public QAbstractListModel {
     Q_PROPERTY(int count READ count NOTIFY libraryChanged)
     Q_PROPERTY(QString libraryPath READ libraryPath NOTIFY libraryPathChanged)
     Q_PROPERTY(QString lastMessage READ lastMessage NOTIFY lastMessageChanged)
+    Q_PROPERTY(QString searchQuery READ searchQuery WRITE setSearchQuery NOTIFY searchQueryChanged)
 
 public:
     enum Roles {
@@ -25,7 +26,8 @@ public:
         PrimaryPathRole,
         PrimaryUrlRole,
         QualityCountRole,
-        QualitiesTextRole
+        QualitiesTextRole,
+        SourceRowRole
     };
     Q_ENUM(Roles)
 
@@ -38,6 +40,8 @@ public:
     int count() const { return m_tracks.size(); }
     QString libraryPath() const { return m_libraryPath; }
     QString lastMessage() const { return m_lastMessage; }
+    QString searchQuery() const { return m_searchQuery; }
+    void setSearchQuery(const QString &query);
     const QVector<Track> &tracks() const { return m_tracks; }
     const Track *trackAt(int row) const;
     int rowOfId(const QString &id) const;
@@ -66,13 +70,18 @@ signals:
     void libraryChanged();
     void libraryPathChanged();
     void lastMessageChanged();
+    void searchQueryChanged();
 
 private:
     QVector<Track> m_tracks;
+    QVector<int> m_visibleRows;
     QString m_libraryPath;
     QString m_lastMessage;
+    QString m_searchQuery;
 
     void setLastMessage(const QString &message);
+    void rebuildVisibleRows();
+    int sourceRowForDisplayRow(int displayRow) const;
     bool readJsonFile(const QString &path, QJsonObject *out, QString *error) const;
     bool readLibrarySource(const QString &path, QJsonObject *out, QString *baseDir, QString *error) const;
     bool writeJsonFile(const QString &path, const QJsonObject &obj, QString *error) const;

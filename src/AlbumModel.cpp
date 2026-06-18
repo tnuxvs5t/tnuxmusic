@@ -4,6 +4,7 @@
 #include "Track.h"
 
 #include <QCollator>
+#include <QFileInfo>
 #include <QHash>
 #include <QImage>
 #include <algorithm>
@@ -18,7 +19,19 @@ static QString coverImageHash(const QString &path)
     if (path.trimmed().isEmpty())
         return {};
 
-    QImage image(path);
+    const QFileInfo info(path);
+    if (!info.exists() || !info.isFile())
+        return {};
+
+    const QString cacheKey = info.absoluteFilePath()
+        + QChar(0x1f) + QString::number(info.size())
+        + QChar(0x1f) + QString::number(info.lastModified().toMSecsSinceEpoch());
+    static QHash<QString, QString> cache;
+    const auto cached = cache.constFind(cacheKey);
+    if (cached != cache.constEnd())
+        return *cached;
+
+    QImage image(info.absoluteFilePath());
     if (image.isNull())
         return {};
 
@@ -42,7 +55,9 @@ static QString coverImageHash(const QString &path)
     for (int value : pixels)
         bits = (bits << 1) | (value >= average ? 1ULL : 0ULL);
 
-    return QString::number(bits, 16).rightJustified(16, QLatin1Char('0'));
+    const QString hash = QString::number(bits, 16).rightJustified(16, QLatin1Char('0'));
+    cache.insert(cacheKey, hash);
+    return hash;
 }
 
 static QString mergedAlbumKey(const Track &t)

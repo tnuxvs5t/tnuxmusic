@@ -357,6 +357,7 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 placeholderText: "搜索标题 / 艺术家 / 专辑 / 风格"
                                 selectByMouse: true
+                                onTextChanged: libraryManager.searchQuery = text
                             }
                             GhostButton { text: "清空"; onClicked: search.clear() }
                         }
@@ -367,31 +368,26 @@ ApplicationWindow {
                             Layout.fillHeight: true
                             clip: true
                             model: libraryManager
-                            spacing: 0
+                            spacing: 8
                             delegate: Rectangle {
                                 width: trackList.width
-                                height: visible ? 92 : 0
+                                height: 84
                                 radius: 18
-                                color: selectedIndex === index ? "#1d3d45" : (mouse.containsMouse ? "#172932" : "#0e181e")
-                                border.color: selectedIndex === index ? root.accent : root.stroke
-                                visible: {
-                                    var q = search.text.toLowerCase()
-                                    if (q.length === 0) return true
-                                    return (title + " " + artist + " " + album + " " + genre).toLowerCase().indexOf(q) >= 0
-                                }
+                                color: selectedIndex === sourceRow ? "#1d3d45" : (mouse.containsMouse ? "#172932" : "#0e181e")
+                                border.color: selectedIndex === sourceRow ? root.accent : root.stroke
 
                                 MouseArea {
                                     id: mouse
                                     anchors.fill: parent
                                     hoverEnabled: true
                                     acceptedButtons: Qt.LeftButton
-                                    onClicked: selectedIndex = index
-                                    onDoubleClicked: startRow(index, true)
+                                    onClicked: selectedIndex = sourceRow
+                                    onDoubleClicked: startRow(sourceRow, true)
                                 }
 
                                 RowLayout {
                                     anchors.fill: parent
-                                    anchors.margins: 14
+                                    anchors.margins: 10
                                     spacing: 12
                                     Rectangle {
                                         Layout.preferredWidth: 58
@@ -409,8 +405,8 @@ ApplicationWindow {
                                         Label { text: (artist.length ? artist : "未知艺术家") + " · " + (album.length ? album : "未知专辑"); color: root.text1; elide: Text.ElideRight; Layout.fillWidth: true }
                                         Label { text: qualitiesText; color: root.text2; elide: Text.ElideRight; Layout.fillWidth: true }
                                     }
-                                    GhostButton { text: "+队列"; onClicked: say("队列位置 #" + (queueModel.enqueueRow(index) + 1)) }
-                                    AccentButton { text: "播放"; onClicked: startRow(index, true) }
+                                    GhostButton { text: "+队列"; onClicked: say("队列位置 #" + (queueModel.enqueueRow(sourceRow) + 1)) }
+                                    AccentButton { text: "播放"; onClicked: startRow(sourceRow, true) }
                                 }
                             }
                         }

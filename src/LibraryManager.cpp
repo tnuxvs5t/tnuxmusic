@@ -914,15 +914,19 @@ int LibraryManager::rowCount(const QModelIndex &parent) const
 {
     if (parent.isValid())
         return 0;
-    return m_tracks.size();
+    return m_visibleRows.size();
 }
 
 QVariant LibraryManager::data(const QModelIndex &index, int role) const
 {
-    if (!index.isValid() || index.row() < 0 || index.row() >= m_tracks.size())
+    if (!index.isValid() || index.row() < 0 || index.row() >= m_visibleRows.size())
         return {};
 
-    const Track &t = m_tracks[index.row()];
+    const int sourceRow = m_visibleRows[index.row()];
+    if (sourceRow < 0 || sourceRow >= m_tracks.size())
+        return {};
+
+    const Track &t = m_tracks[sourceRow];
     switch (role) {
     case IdRole: return t.id;
     case TitleRole: return t.displayTitle();
@@ -937,6 +941,7 @@ QVariant LibraryManager::data(const QModelIndex &index, int role) const
     case PrimaryUrlRole: return fileUrlFromPath(t.primaryPath());
     case QualityCountRole: return t.qualities.size();
     case QualitiesTextRole: return t.qualitiesText();
+    case SourceRowRole: return sourceRow;
     default: return {};
     }
 }
@@ -957,7 +962,50 @@ QHash<int, QByteArray> LibraryManager::roleNames() const
         {PrimaryUrlRole, "primaryUrl"},
         {QualityCountRole, "qualityCount"},
         {QualitiesTextRole, "qualitiesText"},
+        {SourceRowRole, "sourceRow"},
     };
+}
+
+void LibraryManager::setSearchQuery(const QString &query)
+{
+    const QString normalized = query.simplified().toCaseFolded();
+    if (m_searchQuery == normalized)
+        return;
+
+    beginResetModel();
+    m_searchQuery = normalized;
+    rebuildVisibleRows();
+    endResetModel();
+    emit searchQueryChanged();
+}
+
+void LibraryManager::rebuildVisibleRows()
+{
+    m_visibleRows.clear();
+    m_visibleRows.reserve(m_tracks.size());
+
+    if (m_searchQuery.isEmpty()) {
+        for (int i = 0; i < m_tracks.size(); ++i)
+            m_visibleRows.push_back(i);
+        return;
+    }
+
+    for (int i = 0; i < m_tracks.size(); ++i) {
+        const Track &t = m_tracks[i];
+        const QString haystack = QStringLiteral("%1 %2 %3 %4")
+            .arg(t.displayTitle(), t.artist, t.album, t.genre)
+            .simplified()
+            .toCaseFolded();
+        if (haystack.contains(m_searchQuery))
+            m_visibleRows.push_back(i);
+    }
+}
+
+int LibraryManager::sourceRowForDisplayRow(int displayRow) const
+{
+    if (displayRow < 0 || displayRow >= m_visibleRows.size())
+        return -1;
+    return m_visibleRows[displayRow];
 }
 
 QString LibraryManager::loadDefault()
@@ -1047,6 +1095,7 @@ QString LibraryManager::scanFolder(const QString &folderUrl)
         mergeTrack(inferTrackFromAudioFile(path));
     }
     sortTracks();
+    rebuildVisibleRows();
     endResetModel();
     emit libraryChanged();
 
@@ -1098,6 +1147,7 @@ QString LibraryManager::mergeLibrary(const QString &fileUrl)
     beginResetModel();
     const bool ok = mergeFromJsonObject(obj, &error, baseDir);
     sortTracks();
+    rebuildVisibleRows();
     endResetModel();
     if (!ok) {
         setLastMessage(error);
@@ -1262,6 +1312,7 @@ QString LibraryManager::removeAlbum(const QString &artist, const QString &album)
         return hit;
     });
     m_tracks.erase(it, m_tracks.end());
+    rebuildVisibleRows();
     endResetModel();
     emit libraryChanged();
 
@@ -1332,6 +1383,7 @@ void LibraryManager::clear()
 {
     beginResetModel();
     m_tracks.clear();
+    rebuildVisibleRows();
     endResetModel();
     emit libraryChanged();
     setLastMessage(QStringLiteral("已清空当前曲库"));
@@ -1375,6 +1427,7 @@ bool LibraryManager::replaceFromJsonObject(const QJsonObject &obj, QString *erro
     for (const auto &t : next)
         mergeTrack(t);
     sortTracks();
+    rebuildVisibleRows();
     endResetModel();
     emit libraryChanged();
 
@@ -1392,6 +1445,7 @@ bool LibraryManager::mergeFromJsonObject(const QJsonObject &obj, QString *error,
             mergeTrack(t);
     }
     sortTracks();
+    rebuildVisibleRows();
     if (error)
         error->clear();
     return true;
