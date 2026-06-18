@@ -367,10 +367,10 @@ ApplicationWindow {
                             Layout.fillHeight: true
                             clip: true
                             model: libraryManager
-                            spacing: 8
+                            spacing: 0
                             delegate: Rectangle {
                                 width: trackList.width
-                                height: visible ? 84 : 0
+                                height: visible ? 92 : 0
                                 radius: 18
                                 color: selectedIndex === index ? "#1d3d45" : (mouse.containsMouse ? "#172932" : "#0e181e")
                                 border.color: selectedIndex === index ? root.accent : root.stroke
@@ -380,9 +380,18 @@ ApplicationWindow {
                                     return (title + " " + artist + " " + album + " " + genre).toLowerCase().indexOf(q) >= 0
                                 }
 
+                                MouseArea {
+                                    id: mouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    acceptedButtons: Qt.LeftButton
+                                    onClicked: selectedIndex = index
+                                    onDoubleClicked: startRow(index, true)
+                                }
+
                                 RowLayout {
                                     anchors.fill: parent
-                                    anchors.margins: 10
+                                    anchors.margins: 14
                                     spacing: 12
                                     Rectangle {
                                         Layout.preferredWidth: 58
@@ -403,15 +412,6 @@ ApplicationWindow {
                                     GhostButton { text: "+队列"; onClicked: say("队列位置 #" + (queueModel.enqueueRow(index) + 1)) }
                                     AccentButton { text: "播放"; onClicked: startRow(index, true) }
                                 }
-
-                                MouseArea {
-                                    id: mouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    acceptedButtons: Qt.LeftButton
-                                    onClicked: selectedIndex = index
-                                    onDoubleClicked: startRow(index, true)
-                                }
                             }
                         }
                     }
@@ -431,12 +431,37 @@ ApplicationWindow {
                             cellWidth: 190
                             cellHeight: 250
                             model: albumModel
+                            header: CheckBox {
+                                id: mergeAlbumsCheck
+                                width: albumGrid.width
+                                height: 44
+                                text: "自动合并专辑（封面哈希 + 专辑名相同即合并，忽略歌手差异）"
+                                checked: albumModel.autoMergeAlbums
+                                onToggled: {
+                                    selectedAlbum = -1
+                                    albumModel.autoMergeAlbums = checked
+                                }
+                                contentItem: Text {
+                                    text: mergeAlbumsCheck.text
+                                    color: root.text1
+                                    verticalAlignment: Text.AlignVCenter
+                                    leftPadding: mergeAlbumsCheck.indicator.width + mergeAlbumsCheck.spacing
+                                }
+                            }
                             delegate: Rectangle {
                                 width: 172
                                 height: 232
                                 radius: 22
                                 color: selectedAlbum === index ? "#1d3d45" : (albumMouse.containsMouse ? "#172932" : "#0e181e")
                                 border.color: selectedAlbum === index ? root.accent : root.stroke
+
+                                MouseArea {
+                                    id: albumMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    onClicked: selectedAlbum = index
+                                    onDoubleClicked: playAlbum(index)
+                                }
 
                                 ColumnLayout {
                                     anchors.fill: parent
@@ -453,13 +478,6 @@ ApplicationWindow {
                                     }
                                     Label { Layout.fillWidth: true; text: album; color: root.text0; font.bold: true; elide: Text.ElideRight }
                                     Label { Layout.fillWidth: true; text: subtitle; color: root.text2; elide: Text.ElideRight }
-                                }
-                                MouseArea {
-                                    id: albumMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    onClicked: selectedAlbum = index
-                                    onDoubleClicked: playAlbum(index)
                                 }
                             }
                         }
@@ -539,18 +557,20 @@ ApplicationWindow {
                                         height: 50
                                         radius: 12
                                         color: albumTrackMouse.containsMouse ? "#172932" : "transparent"
+
+                                        MouseArea {
+                                            id: albumTrackMouse
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            onDoubleClicked: startRow(modelData.libraryRow, true)
+                                        }
+
                                         RowLayout {
                                             anchors.fill: parent
                                             anchors.margins: 8
                                             Label { text: modelData.track > 0 ? modelData.track : index + 1; color: root.text2; Layout.preferredWidth: 30 }
                                             Label { text: modelData.title; color: root.text0; elide: Text.ElideRight; Layout.fillWidth: true }
                                             GhostButton { text: "+"; onClicked: queueModel.enqueueRow(modelData.libraryRow) }
-                                        }
-                                        MouseArea {
-                                            id: albumTrackMouse
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                            onDoubleClicked: startRow(modelData.libraryRow, true)
                                         }
                                     }
                                 }
@@ -592,6 +612,14 @@ ApplicationWindow {
                                     radius: 18
                                     color: active ? "#1d3d45" : (queueMouse.containsMouse ? "#172932" : "#0e181e")
                                     border.color: active ? root.accent : root.stroke
+
+                                    MouseArea {
+                                        id: queueMouse
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        onDoubleClicked: playQueueIndex(queueIndex)
+                                    }
+
                                     RowLayout {
                                         anchors.fill: parent
                                         anchors.margins: 10
@@ -602,12 +630,6 @@ ApplicationWindow {
                                             Label { text: (artist || "未知艺术家") + " · " + (album || "未知专辑"); color: root.text2; elide: Text.ElideRight; Layout.fillWidth: true }
                                         }
                                         GhostButton { text: "移除"; onClicked: queueModel.removeAt(queueIndex) }
-                                    }
-                                    MouseArea {
-                                        id: queueMouse
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        onDoubleClicked: playQueueIndex(queueIndex)
                                     }
                                 }
                             }

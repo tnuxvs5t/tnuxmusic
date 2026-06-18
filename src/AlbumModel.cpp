@@ -5,11 +5,52 @@
 
 #include <QCollator>
 #include <QHash>
+#include <QImage>
 #include <algorithm>
 
 static QString albumKey(const Track &t)
 {
     return t.artist.simplified().toCaseFolded() + QChar(0x1f) + t.album.simplified().toCaseFolded();
+}
+
+static QString coverImageHash(const QString &path)
+{
+    if (path.trimmed().isEmpty())
+        return {};
+
+    QImage image(path);
+    if (image.isNull())
+        return {};
+
+    const QImage small = image.convertToFormat(QImage::Format_Grayscale8).scaled(8, 8, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    if (small.isNull())
+        return {};
+
+    int total = 0;
+    QVector<int> pixels;
+    pixels.reserve(64);
+    for (int y = 0; y < small.height(); ++y) {
+        for (int x = 0; x < small.width(); ++x) {
+            const int value = qGray(small.pixel(x, y));
+            pixels.push_back(value);
+            total += value;
+        }
+    }
+
+    const int average = total / pixels.size();
+    quint64 bits = 0;
+    for (int value : pixels)
+        bits = (bits << 1) | (value >= average ? 1ULL : 0ULL);
+
+    return QString::number(bits, 16).rightJustified(16, QLatin1Char('0'));
+}
+
+static QString mergedAlbumKey(const Track &t)
+{
+    const QString imageHash = coverImageHash(t.coverPath);
+    if (imageHash.isEmpty())
+        return albumKey(t);
+    return imageHash + QChar(0x1f) + t.album.simplified().toCaseFolded();
 }
 
 AlbumModel::AlbumModel(LibraryManager *library, QObject *parent)
@@ -29,6 +70,15 @@ int AlbumModel::rowCount(const QModelIndex &parent) const
     return m_albums.size();
 }
 
+void AlbumModel::setAutoMergeAlbums(bool enabled)
+{
+    if (m_autoMergeAlbums == enabled)
+        return;
+    m_autoMergeAlbums = enabled;
+    rebuild();
+    emit autoMergeAlbumsChanged();
+}
+
 QVariant AlbumModel::data(const QModelIndex &index, int role) const
 {
     if (!index.isValid() || index.row() < 0 || index.row() >= m_albums.size())
@@ -43,7 +93,9 @@ QVariant AlbumModel::data(const QModelIndex &index, int role) const
     case CoverUrlRole: return fileUrlFromPath(a.coverPath);
     case YearRole: return a.year;
     case SubtitleRole:
-        return QStringLiteral("%1 · %2 首").arg(a.artist.isEmpty() ? QStringLiteral("未知艺术家") : a.artist).arg(a.rows.size());
+        return QStringLiteral("%1 · %2 首")
+            .arg(a.artist.isEmpty() ? QStringLiteral("未知艺术家") : a.artist)
+            .arg(a.rows.size());
     default: return {};
     }
 }
@@ -93,7 +145,7 @@ void AlbumModel::rebuild()
 
     for (int row = 0; row < tracks.size(); ++row) {
         const Track &t = tracks[row];
-        const QString key = albumKey(t);
+        const QString key = m_autoMergeAlbums ? mergedAlbumKey(t) : albumKey(t);
         int idx = byKey.value(key, -1);
         if (idx < 0) {
             Album a;
@@ -109,6 +161,10 @@ void AlbumModel::rebuild()
 
         Album &a = next[idx];
         a.rows.push_back(row);
+        if (m_autoMergeAlbums && !t.artist.trimmed().isEmpty() &&
+            !a.artist.split(QStringLiteral(" / ")).contains(t.artist)) {
+            a.artist = a.artist.trimmed().isEmpty() ? t.artist : a.artist + QStringLiteral(" / ") + t.artist;
+        }
         if (a.coverPath.isEmpty())
             a.coverPath = t.coverPath;
         if (a.year == 0)

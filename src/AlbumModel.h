@@ -7,6 +7,7 @@ class LibraryManager;
 class AlbumModel : public QAbstractListModel {
     Q_OBJECT
     Q_PROPERTY(int count READ count NOTIFY albumsChanged)
+    Q_PROPERTY(bool autoMergeAlbums READ autoMergeAlbums WRITE setAutoMergeAlbums NOTIFY autoMergeAlbumsChanged)
 
 public:
     enum Roles {
@@ -27,12 +28,15 @@ public:
     QHash<int, QByteArray> roleNames() const override;
 
     int count() const { return m_albums.size(); }
+    bool autoMergeAlbums() const { return m_autoMergeAlbums; }
+    void setAutoMergeAlbums(bool enabled);
 
     Q_INVOKABLE QVariantList tracks(int albumIndex) const;
     Q_INVOKABLE int firstTrackRow(int albumIndex) const;
 
 signals:
     void albumsChanged();
+    void autoMergeAlbumsChanged();
 
 private:
     struct Album {
@@ -46,7 +50,7 @@ private:
 
     LibraryManager *m_library = nullptr;
     QVector<Album> m_albums;
+    bool m_autoMergeAlbums = false;
 
     void rebuild();
 };
-
