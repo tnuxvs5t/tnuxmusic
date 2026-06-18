@@ -96,11 +96,6 @@ install(TARGETS tnuxmusic
 
 if(UNIX AND NOT APPLE)
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/tnuxmusic.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
-    install(FILES
-        ${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/tnuxmusic.svg
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps
-        RENAME tnuxmusic.svg
-    )
     foreach(size 16 24 32 48 64 128 256 512)
         install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/tnuxmusic-${size}.png
             DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${size}x${size}/apps

@@ -118,8 +118,6 @@ for size in 16 24 32 48 64 128 256 512; do
   mkdir -p "$icon_dir"
   install -m 0644 "$ROOT/assets/icons/tnuxmusic-${size}.png" "$icon_dir/tnuxmusic.png"
 done
-mkdir -p "$PKG_ROOT/usr/share/icons/hicolor/scalable/apps"
-install -m 0644 "$ROOT/assets/icons/tnuxmusic.svg" "$PKG_ROOT/usr/share/icons/hicolor/scalable/apps/tnuxmusic.svg"
 
 mkdir -p "$PKG_ROOT/DEBIAN"
 installed_size=$(du -sk "$PKG_ROOT" | awk '{print $1}')
