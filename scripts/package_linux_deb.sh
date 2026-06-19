@@ -37,7 +37,11 @@ install -m 0755 "$APP_BIN" "$BIN_DIR/tnuxmusic.real"
 
 cat > "$BIN_DIR/tnuxmusic" <<'EOF'
 #!/usr/bin/env bash
-APPDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+if command -v readlink >/dev/null 2>&1; then
+  SCRIPT_PATH="$(readlink -f "$SCRIPT_PATH")"
+fi
+APPDIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
 export LD_LIBRARY_PATH="$APPDIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export QT_PLUGIN_PATH="$APPDIR/plugins"
 export QML2_IMPORT_PATH="$APPDIR/qml"
