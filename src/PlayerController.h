@@ -23,7 +23,7 @@ public:
     QString source() const { return m_source; }
     QString errorText() const { return m_errorText; }
 
-    Q_INVOKABLE void playFile(const QString &pathOrUrl);
+    Q_INVOKABLE bool playFile(const QString &pathOrUrl);
     Q_INVOKABLE void toggle();
     Q_INVOKABLE void pause();
     Q_INVOKABLE void stop();
@@ -38,12 +38,18 @@ signals:
     void sourceChanged();
     void errorTextChanged();
     void finished();
+    void failed(const QString &message);
 
 private:
     QMediaPlayer m_player;
     QAudioOutput m_audio;
     QString m_source;
     QString m_errorText;
+    bool m_wantsPlayback = false;
+    quint64 m_commandGeneration = 0;
 
     void setErrorText(const QString &text);
+    void tryStartPlayback();
+    void queueFinished();
+    void queueFailure(const QString &message);
 };

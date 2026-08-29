@@ -18,6 +18,7 @@ ApplicationWindow {
     property int selectedIndex: -1
     property int selectedAlbum: -1
     property string statusText: libraryManager.lastMessage
+    property int consecutiveQueueFailures: 0
 
     readonly property color bg0: "#071014"
     readonly property color bg1: "#0d1b22"
@@ -55,21 +56,45 @@ ApplicationWindow {
     }
 
     function startRow(row, touchQueue) {
-        if (row < 0) return
+        if (row < 0) return false
         var path = libraryManager.primaryPath(row)
         if (path.length === 0) {
             say("这首歌没有可播放文件")
-            return
+            return false
         }
         selectedIndex = row
-        if (touchQueue) queueModel.playNowRow(row)
-        playerController.playFile(path)
+        if (touchQueue) {
+            consecutiveQueueFailures = 0
+            queueModel.playNowRow(row)
+        }
+        if (!playerController.playFile(path))
+            return false
         say(lyricModel.loadFromFile(libraryManager.lyricPath(row)))
+        return true
     }
 
     function playQueueIndex(index) {
+        consecutiveQueueFailures = 0
         var row = queueModel.activate(index)
-        startRow(row, false)
+        if (!startRow(row, false))
+            playAvailable(1, false)
+    }
+
+    function playAvailable(direction, resetFailures) {
+        if (resetFailures)
+            consecutiveQueueFailures = 0
+
+        // A queue may contain stale library entries or paths.  Try every item
+        // at most once, so one missing file cannot stop the whole queue and an
+        // entirely broken queue cannot spin forever.
+        var attempts = queueModel.count
+        while (attempts-- > 0) {
+            var row = direction < 0 ? queueModel.previous() : queueModel.next()
+            if (startRow(row, false))
+                return true
+        }
+        say("播放队列中没有可用的音频文件")
+        return false
     }
 
     function enqueueAlbum(albumIndex) {
@@ -80,10 +105,12 @@ ApplicationWindow {
     }
 
     function playAlbum(albumIndex) {
+        consecutiveQueueFailures = 0
         queueModel.clear()
         enqueueAlbum(albumIndex)
         var row = queueModel.activate(0)
-        startRow(row, false)
+        if (!startRow(row, false))
+            playAvailable(1, false)
     }
 
     function playlistNameOrCurrent() {
@@ -94,8 +121,17 @@ ApplicationWindow {
     Connections {
         target: playerController
         function onFinished() {
-            var row = queueModel.next()
-            if (row >= 0) startRow(row, false)
+            consecutiveQueueFailures = 0
+            playAvailable(1, false)
+        }
+        function onFailed(message) {
+            ++consecutiveQueueFailures
+            if (queueModel.count > 0 && consecutiveQueueFailures < queueModel.count) {
+                say("播放失败，已跳过：" + message)
+                playAvailable(1, false)
+            } else {
+                say("队列中的音频均无法播放：" + message)
+            }
         }
     }
 
@@ -590,8 +626,8 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 Label { text: "播放队列"; color: root.text0; font.pixelSize: 24; font.bold: true }
                                 Item { Layout.fillWidth: true }
-                                GhostButton { text: "上一首"; enabled: queueModel.count > 0; onClicked: startRow(queueModel.previous(), false) }
-                                AccentButton { text: "下一首"; enabled: queueModel.count > 0; onClicked: startRow(queueModel.next(), false) }
+                                GhostButton { text: "上一首"; enabled: queueModel.count > 0; onClicked: playAvailable(-1, true) }
+                                AccentButton { text: "下一首"; enabled: queueModel.count > 0; onClicked: playAvailable(1, true) }
                                 GhostButton { text: "清空"; onClicked: queueModel.clear() }
                             }
 
@@ -809,7 +845,7 @@ ApplicationWindow {
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 10
-                        GhostButton { text: "⏮"; enabled: queueModel.count > 0; onClicked: startRow(queueModel.previous(), false) }
+                        GhostButton { text: "⏮"; enabled: queueModel.count > 0; onClicked: playAvailable(-1, true) }
                         AccentButton {
                             text: playerController.playing ? "暂停" : "播放"
                             Layout.fillWidth: true
@@ -819,7 +855,7 @@ ApplicationWindow {
                                 else playerController.toggle()
                             }
                         }
-                        GhostButton { text: "⏭"; enabled: queueModel.count > 0; onClicked: startRow(queueModel.next(), false) }
+                        GhostButton { text: "⏭"; enabled: queueModel.count > 0; onClicked: playAvailable(1, true) }
                     }
 
                     RowLayout {

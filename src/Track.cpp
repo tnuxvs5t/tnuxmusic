@@ -101,6 +101,15 @@ QString Track::primaryPath() const
 {
     if (qualities.isEmpty())
         return {};
+
+    // A rescan/import can leave an older quality entry in the library after
+    // that file has been moved, while another quality (commonly the decoded
+    // NCM file) is still present.  Playback must prefer an existing file
+    // instead of getting stuck on the stale first entry.
+    for (const auto &quality : qualities) {
+        if (QFileInfo(quality.path).isFile())
+            return quality.path;
+    }
     return qualities.first().path;
 }
 
