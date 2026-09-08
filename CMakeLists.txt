@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(tnuxmusic VERSION 1.0.0 LANGUAGES CXX)
+project(tnuxmusic VERSION 2.0.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 
@@ -13,6 +13,7 @@ set(CMAKE_AUTORCC ON)
 find_package(Qt6 6.5 REQUIRED COMPONENTS
     Core
     Concurrent
+    Network
     Gui
     Quick
     QuickControls2
@@ -79,6 +80,7 @@ qt_add_qml_module(tnuxmusic
 target_link_libraries(tnuxmusic PRIVATE
     Qt6::Core
     Qt6::Concurrent
+    Qt6::Network
     Qt6::Gui
     Qt6::Quick
     Qt6::QuickControls2
@@ -89,6 +91,7 @@ target_link_libraries(tnuxmusic PRIVATE
 
 target_compile_definitions(tnuxmusic PRIVATE
     TNUXMUSIC_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    TNUXMUSIC_VERSION="${PROJECT_VERSION}"
 )
 
 install(TARGETS tnuxmusic
@@ -134,6 +137,10 @@ if(BUILD_TESTING)
     target_link_libraries(tnuxmusic_tests PRIVATE Qt6::Test Qt6::Core Qt6::Concurrent
         Qt6::Gui Qt6::Quick Qt6::QuickControls2 Qt6::Qml Qt6::Multimedia OpenSSL::Crypto)
     target_compile_definitions(tnuxmusic_tests PRIVATE TNUXMUSIC_QML_FILE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
+    find_package(Python3 COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME cli_regression COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_regression.py $<TARGET_FILE:tnuxmusic>)
+    endif()
     add_test(NAME regression COMMAND tnuxmusic_tests)
     set_tests_properties(regression PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 endif()

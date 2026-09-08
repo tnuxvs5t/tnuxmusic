@@ -267,6 +267,150 @@ private slots:
         player.seek(200); QTRY_VERIFY_WITH_TIMEOUT(player.position()>=200,2000);
         player.stop(); QVERIFY(!player.playFile(temp.filePath("missing.wav"))); QVERIFY(!player.errorText().isEmpty());
     }
+    void synchronousFailuresNeverPublishDrafts() {
+        QTemporaryDir temp;
+        LibraryManager model;
+        QVERIFY(model.replaceFromJsonObject(library({song("a","A","Original","/tmp/a.mp3")})));
+        const auto before = model.toJsonObject();
+        const QString source = temp.filePath("import.json");
+        writeFile(source, QJsonDocument(library({song("b","B","New",temp.filePath("b.mp3"))})).toJson());
+        writeFile(temp.filePath("b.mp3"), "audio");
+        QVERIFY(QDir().mkpath(model.libraryPath()));
+        QSignalSpy changed(&model, &LibraryManager::libraryChanged);
+        QVERIFY(!model.importLibrary(source).startsWith("已导入"));
+        QCOMPARE(model.toJsonObject(), before);
+        QVERIFY(!model.mergeLibrary(source).startsWith("已合并"));
+        QCOMPARE(model.toJsonObject(), before);
+        QVERIFY(!model.scanFolder(temp.path()).startsWith("扫描完成"));
+        QCOMPARE(model.toJsonObject(), before);
+        QCOMPARE(changed.count(), 0);
+    }
+    void cancelledImportCanBeFollowedBySuccessfulEdits() {
+        QTemporaryDir temp; LibraryManager model;
+        QVERIFY(model.replaceFromJsonObject(library({song("a","A","Original","/tmp/a.mp3")})));
+        QVERIFY(model.save().startsWith("已保存"));
+        const auto before = model.toJsonObject(); const auto disk = readFile(model.libraryPath());
+        QVector<Track> incoming;
+        for (int i = 0; i < 8000; ++i) incoming.append(song(QString::number(i),"B","New",temp.filePath(QString::number(i)+".mp3")));
+        const QString path=temp.filePath("incoming.json"); writeFile(path,QJsonDocument(library(incoming)).toJson());
+        QSignalSpy done(&model,&LibraryManager::operationFinished), changes(&model,&LibraryManager::libraryChanged);
+        QVERIFY(model.startOperation("import",path)); QVERIFY(model.canCancel()); model.cancelOperation();
+        QVERIFY(!model.canCancel()); QTRY_COMPARE_WITH_TIMEOUT(done.count(),1,20000);
+        QVERIFY(!done.first()[0].toBool()); QCOMPARE(model.toJsonObject(),before); QCOMPARE(readFile(model.libraryPath()),disk); QCOMPARE(changes.count(),0);
+        QVERIFY(model.updateAlbum({"a"},"Edited","A",2020,"edited").startsWith("已保存"));
+        QVERIFY(model.startOperation("merge",path)); QTRY_COMPARE_WITH_TIMEOUT(done.count(),2,20000);
+        QVERIFY(done.last()[0].toBool()); QVERIFY(model.canUndoEdit());
+        QVERIFY(model.undoLastEdit().startsWith("已撤销")); QCOMPARE(model.count(),1);
+    }
+    void stableOriginsSurviveEditingAndRelocation() {
+        LibraryManager model; AlbumModel albums(&model);
+        auto a=song("a","Singer","Old","/original/a.mp3");
+        QVERIFY(model.replaceFromJsonObject(library({a})));
+        QVERIFY(model.updateAlbum({"a"},"Edited","Curator",2025,"manual").startsWith("已保存"));
+        auto incoming=a; incoming.qualities[0].path="/relocated/a.mp3";
+        QVERIFY(model.mergeFromJsonObject(library({incoming})));
+        QCOMPARE(model.count(),1); QCOMPARE(model.trackAt(0)->album,"Edited"); QCOMPARE(model.trackAt(0)->albumId,"manual");
+        QCOMPARE(model.trackAt(0)->qualities.size(),2);
+        auto collision=song("a","Different Singer","Other","/different/a.mp3");
+        QVERIFY(model.mergeFromJsonObject(library({collision})));
+        QCOMPARE(model.count(),2); QCOMPARE(model.trackAt(model.rowOfId("a"))->album,"Edited");
+        LibraryManager reloaded; QVERIFY(reloaded.replaceFromJsonObject(model.toJsonObject()));
+        QVERIFY(reloaded.mergeFromJsonObject(library({incoming}))); QCOMPARE(reloaded.count(),2);
+    }
+    void ambiguousRecordingKeysDoNotStealQualities() {
+        LibraryManager model;
+        auto a=song("a","A","Album","/a.mp3"), b=song("b","A","Album","/b.mp3"), c=song("c","A","Album","/c.mp3");
+        a.title=b.title=c.title="Intro";
+        QVERIFY(model.replaceFromJsonObject(library({a,b})));
+        QVERIFY(model.mergeFromJsonObject(library({c}))); QCOMPARE(model.count(),3);
+        QCOMPARE(model.trackAt(model.rowOfId("a"))->qualities.size(),1);
+        QCOMPARE(model.trackAt(model.rowOfId("b"))->qualities.size(),1);
+        auto relocated=b; relocated.qualities[0].path="/relocated/b.mp3";
+        QVERIFY(model.mergeFromJsonObject(library({relocated}))); QCOMPARE(model.count(),3);
+        QCOMPARE(model.trackAt(model.rowOfId("b"))->qualities.size(),2);
+    }
+    void computedDuplicateIdsAreRejected() {
+        LibraryManager model; QString error;
+        auto a=song("","A","Album","/a.mp3");
+        QVERIFY(!model.replaceFromJsonObject(library({a,a}),&error)); QVERIFY(!error.isEmpty()); QCOMPARE(model.count(),0);
+    }
+    void albumMovesSplitAndSearchArePrecise() {
+        LibraryManager model; AlbumModel albums(&model); PlaybackQueue queue(&model);
+        auto a=song("a","Singer A","First","/a.mp3"), b=song("b","Singer B","First","/b.mp3"), c=song("c","Singer C","Target","/c.mp3");
+        a.albumArtist=b.albumArtist="Label"; c.albumArtist="Target Label"; c.year=2020;
+        QVERIFY(model.replaceFromJsonObject(library({a,b,c})));
+        queue.enqueueRows({model.rowOfId("a"),model.rowOfId("b")}); queue.activate(1);
+        QString first,target;
+        for(const auto &v:albums.choices()) { auto key=v.toMap()["key"].toString(); (albums.info(key)["album"]=="First" ? first : target)=key; }
+        albums.setSearchQuery("Singer B"); QCOMPARE(albums.rowCount(),1);
+        QCOMPARE(albums.tracksForKey(target).size(),1); // Details do not depend on the view filter.
+        QCOMPARE(albums.choices(first,"2020").size(),1); QCOMPARE(albums.choices(first,"no match").size(),0);
+        QVERIFY(albums.moveTracks(first,{"a"},target).startsWith("已保存"));
+        QCOMPARE(model.trackAt(model.rowOfId("a"))->albumArtist,"Target Label");
+        QCOMPARE(model.trackAt(model.rowOfId("a"))->artist,"Singer A"); QCOMPARE(queue.currentRow(),model.rowOfId("b"));
+        const QString merged="id:"+model.trackAt(model.rowOfId("a"))->albumId;
+        QVERIFY(albums.splitTracks(merged,{"a"},"Target","Target Label",2020).startsWith("已保存"));
+        QCOMPARE(albums.count(),3); QCOMPARE(model.count(),3);
+        QVERIFY(model.undoLastEdit().startsWith("已撤销")); QCOMPARE(albums.count(),2);
+        const auto before=model.toJsonObject(); QVERIFY(!albums.moveTracks(first,{"c"},merged).startsWith("已保存")); QCOMPARE(model.toJsonObject(),before);
+    }
+    void missingYearsAndDiscFoldersStayConservative() {
+        LibraryManager model; AlbumModel albums(&model);
+        auto a=song("a","A","Album","/edition/CD1/a.mp3"), b=song("b","A","Album","/edition/CD2/b.mp3");
+        a.year=2020; b.disc=2;
+        QVERIFY(model.replaceFromJsonObject(library({a,b}))); QCOMPARE(albums.count(),1);
+        QCOMPARE(model.trackAt(model.rowOfId("b"))->year,0); // Grouping never rewrites source tags.
+        auto c=song("c","A","Album","/edition/CD1/c.mp3"); c.year=2024;
+        QVERIFY(model.replaceFromJsonObject(library({a,b,c}))); QCOMPARE(albums.count(),3);
+        b.qualities[0].path="/elsewhere/b.mp3";
+        QVERIFY(model.replaceFromJsonObject(library({a,b}))); QCOMPARE(albums.count(),2);
+    }
+    void queueRemovalDuplicateOccurrenceAndPlaybackModes() {
+        LibraryManager model; PlaybackQueue queue(&model);
+        QVERIFY(model.replaceFromJsonObject(library({song("a","A","A","/a.mp3"),song("b","B","B","/b.mp3"),song("c","C","C","/c.mp3")})));
+        queue.enqueueRows({0,1,2}); queue.activate(1); queue.removeAt(1);
+        QCOMPARE(queue.currentIndex(),-1); QCOMPARE(queue.next(),model.rowOfId("c"));
+        queue.clear(); queue.enqueueRows({0,1,0}); queue.activate(2);
+        QVERIFY(model.updateAlbum({"a"},"Edited","A",2020,"manual").startsWith("已保存")); QCOMPARE(queue.currentIndex(),2);
+        queue.setPlaybackMode(PlaybackQueue::Sequential); QCOMPARE(queue.next(true),-1);
+        queue.setPlaybackMode(PlaybackQueue::RepeatOne); QCOMPARE(queue.next(true),model.rowOfId("a"));
+        QCOMPARE(queue.next(),model.rowOfId("a")); QCOMPARE(queue.currentIndex(),0); // Manual next ignores repeat-one.
+        queue.setPlaybackMode(PlaybackQueue::Shuffle);
+        for(int i=0;i<20;++i) { const auto index=queue.currentIndex(); queue.next(); QVERIFY(queue.currentIndex()!=index); }
+    }
+    void playlistLoadSkipsMissingWithoutPretendingToPlay() {
+        LibraryManager model; PlaybackQueue queue(&model);
+        QVERIFY(model.replaceFromJsonObject(library({song("a","A","A","/a.mp3"),song("b","B","B","/b.mp3")})));
+        queue.enqueueRows({0,1}); queue.activate(1); QVERIFY(queue.saveQueueAsPlaylist("Saved").startsWith("已保存"));
+        QVERIFY(model.removeTracks({"a"}).startsWith("已从曲库"));
+        QVERIFY(queue.loadPlaylist("Saved",true).startsWith("已加载")); QCOMPARE(queue.count(),1); QCOMPARE(queue.currentIndex(),-1);
+        QCOMPARE(queue.next(),model.rowOfId("b"));
+    }
+    void damagedZipCacheIsRepaired() {
+        QTemporaryDir temp; LibraryManager model;
+        const QString audio=temp.filePath("a.mp3"); writeFile(audio,"known-audio");
+        QVERIFY(model.replaceFromJsonObject(library({song("a","A","Album",audio)})));
+        const QString zip=temp.filePath("library.zip"); QVERIFY(model.exportLocalizedZip(zip).startsWith("已本地化"));
+        LibraryManager imported; QVERIFY(imported.importLibrary(zip).startsWith("已导入"));
+        const QString cached=imported.primaryPath(0); writeFile(cached,"broken-file");
+        QVERIFY(imported.mergeLibrary(zip).startsWith("已合并")); QCOMPARE(readFile(cached),QByteArray("known-audio"));
+        QCOMPARE(imported.trackAt(0)->qualities.size(),1);
+        // A symlink at a cached resource must be rejected, never followed.
+        const QString outside=temp.filePath("outside.mp3"); writeFile(outside,"outside");
+        QVERIFY(QFile::remove(cached)); QVERIFY(QFile::link(outside,cached));
+        const auto before=imported.toJsonObject();
+        QVERIFY(!imported.mergeLibrary(zip).startsWith("已合并"));
+        QCOMPARE(imported.toJsonObject(),before); QCOMPARE(readFile(outside),QByteArray("outside"));
+    }
+    void normalizationScriptPreservesDistinctTracks() {
+        LibraryManager model; ScriptBridge bridge(&model);
+        auto a=song("a"," A "," Same ","/a.mp3"), b=song("b"," A "," Same ","/b.mp3"); a.title=b.title=" Intro "; b.disc=2;
+        QVERIFY(model.replaceFromJsonObject(library({a,b})));
+        const QString script=QFileInfo(QStringLiteral(TNUXMUSIC_QML_FILE)).dir().filePath("../scripts/normalize_album.js");
+        QVERIFY(bridge.runScript(script).startsWith("脚本整理完成")); QCOMPARE(model.count(),2);
+        QVERIFY(model.rowOfId("a")>=0); QVERIFY(model.rowOfId("b")>=0); QCOMPARE(model.trackAt(model.rowOfId("b"))->disc,2);
+        QCOMPARE(model.trackAt(model.rowOfId("a"))->title,"Intro");
+    }
     void scaleMeasurements() {
         for (int count : {1000,10000,30000}) {
             LibraryManager model; AlbumModel albums(&model); albums.setAutoMergeAlbums(false); QVector<Track> tracks;
@@ -303,12 +447,29 @@ private slots:
             if(!output.isEmpty()) { QDir().mkpath(output); auto image=window->grabWindow(); QVERIFY(!image.isNull()); QVERIFY(image.save(QDir(output).filePath(name+".png"))); }
         };
         snapshot("albums");
+        if (fixture.isEmpty()) {
+            window->setProperty("playingId", "0");
+            window->setProperty("playingTrack", model.track(model.rowOfId("0")));
+            QVERIFY(model.removeTracks({"0"}).startsWith("已从曲库"));
+            QCOMPARE(window->property("playingId").toString(),QString());
+            QCOMPARE(player.source(),QString());
+            QVERIFY(model.undoLastEdit().startsWith("已撤销"));
+        }
         window->setProperty("currentTab",0); snapshot("songs");
         model.setSearchQuery("unlikely-search-no-results"); snapshot("empty-search"); model.setSearchQuery("");
         if(albums.rowCount()>0) {
             window->setProperty("currentTab",1);
             const QString key=albums.data(albums.index(0),AlbumModel::KeyRole).toString();
             QVERIFY(QMetaObject::invokeMethod(window,"openAlbum",Q_ARG(QVariant,key))); snapshot("album-detail");
+            if (fixture.isEmpty()) {
+                const auto tracks=albums.tracksForKey(key);
+                window->setProperty("selectedTrackIds",QStringList{tracks.first().toMap()["id"].toString()}); snapshot("album-selection");
+                auto *split=window->findChild<QObject*>("splitAlbumDialog"); QVERIFY(split);
+                split->setProperty("sourceKey",key); split->setProperty("selectedIds",QStringList{tracks.first().toMap()["id"].toString()});
+                QVERIFY(QMetaObject::invokeMethod(split,"open")); snapshot("split-preview"); QVERIFY(QMetaObject::invokeMethod(split,"reject"));
+                auto *details=window->findChild<QObject*>("trackInfoDialog"); QVERIFY(details);
+                details->setProperty("entry",tracks.first()); QVERIFY(QMetaObject::invokeMethod(details,"open")); snapshot("track-info"); QVERIFY(QMetaObject::invokeMethod(details,"reject"));
+            }
         }
         if(albums.count()>1) {
             const auto choices=albums.choices();
@@ -322,8 +483,18 @@ private slots:
             QVERIFY(QMetaObject::invokeMethod(dialog,"open")); snapshot("merge-preview");
             QVERIFY(QMetaObject::invokeMethod(dialog,"reject"));
         }
+        if (fixture.isEmpty()) {
+            auto *filter=window->findChild<QObject*>("mergeSearch"); QVERIFY(filter);
+            filter->setProperty("text","definitely absent");
+            auto *target=window->findChild<QObject*>("mergeTarget"); QCOMPARE(target->property("currentIndex").toInt(),-1);
+            filter->setProperty("text","");
+        }
         queue.enqueueRows({0,1,2}); window->setProperty("currentTab",2); snapshot("queue");
         window->setWidth(960); window->setHeight(640); snapshot("compact-queue");
+        window->setProperty("currentTab",1); snapshot("compact-detail");
+        auto *compactDialog=window->findChild<QObject*>("mergeAlbumDialog");
+        QVERIFY(QMetaObject::invokeMethod(compactDialog,"open")); snapshot("compact-merge");
+        QVERIFY(QMetaObject::invokeMethod(compactDialog,"reject"));
         window->setProperty("currentTab",0); window->setProperty("showLyrics",true); snapshot("compact-lyrics");
         if(!errors.isEmpty()) qWarning().noquote()<<errors.join('\n');
         QVERIFY(errors.isEmpty());

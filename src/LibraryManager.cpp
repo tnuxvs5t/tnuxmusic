@@ -349,7 +349,8 @@ static bool readStoredZipEntry(const QString &zipPath,
 static bool extractSelectedZipEntries(const QString &zipPath,
                                       const QString &destDir,
                                       const QSet<QString> &wanted,
-                                      QString *error)
+                                      QString *error,
+                                      const std::shared_ptr<std::atomic_int> &cancelState = {})
 {
     if (wanted.isEmpty())
         return true;
@@ -364,6 +365,7 @@ static bool extractSelectedZipEntries(const QString &zipPath,
 
     QSet<QString> found;
     while (!zip.atEnd()) {
+        if (cancelState && cancelState->load() == 1) { if (error) *error = QStringLiteral("任务已取消"); return false; }
         const QByteArray header = zip.read(30);
         if (header.isEmpty() || header.size() < 30 || readZipLe32(header, 0) != 0x04034b50)
             break;
@@ -419,6 +421,7 @@ static bool extractSelectedZipEntries(const QString &zipPath,
         // Reject symlinks in the cache so archive writes cannot escape it.
         QString cursor = outInfo.absoluteFilePath();
         const QString root = QFileInfo(destDir).absoluteFilePath();
+        if (QFileInfo(root).isSymLink()) { if (error) *error = QStringLiteral("ZIP 缓存目录不能是符号链接"); return false; }
         while (cursor != root) {
             if (!cursor.startsWith(root + '/') || QFileInfo(cursor).isSymLink()) {
                 if (error) *error = QStringLiteral("ZIP 缓存路径不安全：%1").arg(name);
@@ -431,6 +434,22 @@ static bool extractSelectedZipEntries(const QString &zipPath,
                 *error = QStringLiteral("无法创建解包目录：%1").arg(outInfo.absolutePath());
             return false;
         }
+        // Verify existing resources instead of trusting a cache hit by filename.
+        QFile cached(outInfo.absoluteFilePath());
+        if (cached.size() == uncompressedSize && cached.open(QIODevice::ReadOnly)) {
+            quint32 cachedCrc = 0xffffffffu;
+            while (!cached.atEnd()) {
+                if (cancelState && cancelState->load() == 1) { if (error) *error = QStringLiteral("任务已取消"); return false; }
+                const auto chunk = cached.read(128 * 1024);
+                if (chunk.isEmpty() && cached.error() != QFileDevice::NoError) break;
+                cachedCrc = crc32Bytes(chunk, cachedCrc);
+            }
+            if (cached.error() == QFileDevice::NoError && ~cachedCrc == readZipLe32(header, 14)) {
+                if (!skipZipBytes(zip, compressedSize)) { if (error) *error = QStringLiteral("ZIP 条目截断"); return false; }
+                continue;
+            }
+        }
+        cached.close();
         QSaveFile out(outInfo.absoluteFilePath());
         if (!out.open(QIODevice::WriteOnly)) {
             if (error)
@@ -441,6 +460,7 @@ static bool extractSelectedZipEntries(const QString &zipPath,
         quint32 remaining = compressedSize;
         quint32 crc = 0xffffffffu;
         while (remaining > 0) {
+            if (cancelState && cancelState->load() == 1) { if (error) *error = QStringLiteral("任务已取消"); return false; }
             const QByteArray chunk = zip.read(qMin<quint32>(remaining, 128 * 1024));
             if (chunk.isEmpty()) {
                 if (error)
@@ -508,7 +528,7 @@ static QString zipEntryForCachedPath(const QString &destDir, const QString &path
     return normalizedZipEntryName(relative.toUtf8());
 }
 
-static bool readLibrarySourceInternal(const QString &path, QJsonObject *out, QString *baseDir, QString *error)
+static bool readLibrarySourceInternal(const QString &path, QJsonObject *out, QString *baseDir, QString *error, const std::shared_ptr<std::atomic_int> &cancelState = {})
 {
     const QFileInfo info(path);
     if (!info.exists()) {
@@ -538,7 +558,7 @@ static bool readLibrarySourceInternal(const QString &path, QJsonObject *out, QSt
                 if (!resource.isEmpty()) wanted.insert(normalizedZipEntryName(resource.toUtf8()));
             }
         }
-        if (!extractSelectedZipEntries(path, destDir, wanted, error)
+        if (!extractSelectedZipEntries(path, destDir, wanted, error, cancelState)
             || !writeCachedZipManifest(destDir, bytes, error)) return false;
         *out = object;
         if (baseDir) *baseDir = destDir;
@@ -1104,12 +1124,12 @@ static QString bundledExampleMusicPath()
     return {};
 }
 
-LibraryManager::LibraryManager(QObject *parent)
+LibraryManager::LibraryManager(QObject *parent, const QString &libraryFile)
     : QAbstractListModel(parent)
 {
     const QString root = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir().mkpath(root);
-    m_libraryPath = QDir(root).filePath("library.json");
+    m_libraryPath = libraryFile.isEmpty() ? QDir(root).filePath("library.json") : QFileInfo(libraryFile).absoluteFilePath();
 }
 
 int LibraryManager::rowCount(const QModelIndex &parent) const
@@ -1212,6 +1232,8 @@ int LibraryManager::sourceRowForDisplayRow(int displayRow) const
 
 QString LibraryManager::loadDefault()
 {
+    if (m_busy) return QStringLiteral("曲库任务进行中，请稍候");
+    m_operationSucceeded = false;
     if (!QFileInfo::exists(m_libraryPath)) {
         const QString demoPath = bundledExampleMusicPath();
         if (!demoPath.isEmpty()) {
@@ -1229,7 +1251,7 @@ QString LibraryManager::loadDefault()
         setLastMessage(error);
         return error;
     }
-    if (!replaceFromJsonObject(obj, &error)) {
+    if (!replaceFromJsonObject(obj, &error, QFileInfo(m_libraryPath).absolutePath())) {
         setLastMessage(error);
         return error;
     }
@@ -1254,6 +1276,7 @@ QString LibraryManager::save()
 
 QString LibraryManager::scanFolder(const QString &folderUrl)
 {
+    if (!m_preparing) return performOperation("scan", folderUrl);
     if (m_busy) return QStringLiteral("曲库任务进行中，请稍候");
     m_operationSucceeded = false;
     const QString folder = canonicalLocalPath(folderUrl);
@@ -1273,7 +1296,7 @@ QString LibraryManager::scanFolder(const QString &folderUrl)
     beginResetModel();
     QSet<QString> scanned;
     QDirIterator it(folder, QDir::Files | QDir::Readable, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
+    while (it.hasNext() && !cancelled()) {
         const QString path = it.next();
         const QFileInfo info(path);
         const QString ext = info.suffix().toLower();
@@ -1334,6 +1357,7 @@ QString LibraryManager::scanFolder(const QString &folderUrl)
 
 QString LibraryManager::importLibrary(const QString &fileUrl)
 {
+    if (!m_preparing) return performOperation("import", fileUrl);
     if (m_busy) return QStringLiteral("曲库任务进行中，请稍候");
     m_operationSucceeded = false;
     const QString path = canonicalLocalPath(fileUrl);
@@ -1356,6 +1380,7 @@ QString LibraryManager::importLibrary(const QString &fileUrl)
 
 QString LibraryManager::mergeLibrary(const QString &fileUrl)
 {
+    if (!m_preparing) return performOperation("merge", fileUrl);
     if (m_busy) return QStringLiteral("曲库任务进行中，请稍候");
     m_operationSucceeded = false;
     const QString path = canonicalLocalPath(fileUrl);
@@ -1389,13 +1414,13 @@ QString LibraryManager::mergeLibrary(const QString &fileUrl)
             const Track *existing = found >= 0 ? &m_tracks[found] : nullptr;
             auto remember = [&](const QString &resource) {
                 const auto entry = zipEntryForCachedPath(baseDir, resource);
-                if (!entry.isEmpty() && !QFileInfo(resource).isFile()) wanted.insert(entry);
+                if (!entry.isEmpty()) wanted.insert(entry);
             };
             for (const auto &q : incoming.qualities) remember(q.path);
-            if (!existing || existing->coverPath.isEmpty()) remember(incoming.coverPath);
-            if (!existing || existing->lyricPath.isEmpty()) remember(incoming.lyricPath);
+            if (!existing || existing->coverPath.isEmpty() || existing->coverPath == incoming.coverPath) remember(incoming.coverPath);
+            if (!existing || existing->lyricPath.isEmpty() || existing->lyricPath == incoming.lyricPath) remember(incoming.lyricPath);
         }
-        if (!extractSelectedZipEntries(path, baseDir, wanted, &error)
+        if (!extractSelectedZipEntries(path, baseDir, wanted, &error, m_cancelState)
             || !writeCachedZipManifest(baseDir, zipManifest, &error)) {
             setLastMessage(error); return error;
         }
@@ -1681,14 +1706,19 @@ bool LibraryManager::replaceFromJsonObject(const QJsonObject &obj, QString *erro
     if (!validateLibrary(obj, error)) return false;
     const QJsonArray arr = obj.value("tracks").toArray();
 
-    beginResetModel();
-    m_tracks.clear();
-    rebuildTrackIndex();
+    QVector<Track> parsed;
+    QSet<QString> resolvedIds;
     for (const auto &v : arr) {
         Track t = Track::fromJson(v.toObject(), baseDir);
-        if (!t.qualities.isEmpty())
-            m_tracks.append(std::move(t));
+        if (resolvedIds.contains(t.id)) {
+            if (error) *error = QStringLiteral("曲库包含重复的自动生成 ID：%1").arg(t.id);
+            return false;
+        }
+        resolvedIds.insert(t.id);
+        parsed.append(std::move(t));
     }
+    beginResetModel();
+    m_tracks = std::move(parsed);
     sortTracks();
     rebuildVisibleRows();
     endResetModel();
@@ -1742,8 +1772,8 @@ void LibraryManager::rebuildTrackIndex()
         m_trackIndexById.insert(m_tracks[i].id, i);
         for (const auto &q : m_tracks[i].qualities) m_trackIndexByPath.insert(q.path, i);
         const QString key = m_tracks[i].normalizedKey();
-        if (!m_trackIndexByKey.contains(key))
-            m_trackIndexByKey.insert(key, i);
+        if (m_trackIndexByKey.contains(key)) m_trackIndexByKey[key] = -2;
+        else m_trackIndexByKey.insert(key, i);
     }
 }
 
@@ -1768,7 +1798,7 @@ bool LibraryManager::readJsonFile(const QString &path, QJsonObject *out, QString
 
 bool LibraryManager::readLibrarySource(const QString &path, QJsonObject *out, QString *baseDir, QString *error) const
 {
-    return readLibrarySourceInternal(path, out, baseDir, error);
+    return readLibrarySourceInternal(path, out, baseDir, error, m_cancelState);
 }
 
 bool LibraryManager::writeJsonFile(const QString &path, const QJsonObject &obj, QString *error) const
@@ -1777,6 +1807,8 @@ bool LibraryManager::writeJsonFile(const QString &path, const QJsonObject &obj, 
     if (!info.absoluteDir().exists())
         QDir().mkpath(info.absolutePath());
 
+    if (cancelled()) { if (error) *error = QStringLiteral("任务已取消"); return false; }
+    if (m_preparing && path == m_libraryPath) return true;
     QSaveFile f(path);
     if (!f.open(QIODevice::WriteOnly)) {
         if (error)
@@ -1784,6 +1816,13 @@ bool LibraryManager::writeJsonFile(const QString &path, const QJsonObject &obj, 
         return false;
     }
     const QByteArray bytes = QJsonDocument(obj).toJson(QJsonDocument::Indented);
+    if (m_cancelState) {
+        int expected = 0;
+        if (!m_cancelState->compare_exchange_strong(expected, 2) && expected == 1) {
+            if (error) *error = QStringLiteral("任务已取消");
+            return false;
+        }
+    }
     if (f.write(bytes) != bytes.size() || !f.commit()) {
         if (error) *error = QStringLiteral("保存失败：%1 (%2)").arg(path, f.errorString());
         return false;
@@ -1793,7 +1832,7 @@ bool LibraryManager::writeJsonFile(const QString &path, const QJsonObject &obj, 
 
 void LibraryManager::mergeTrack(const Track &track)
 {
-    if (track.qualities.isEmpty())
+    if (cancelled() || track.qualities.isEmpty())
         return;
 
     const QString key = track.normalizedKey();
@@ -1802,9 +1841,25 @@ void LibraryManager::mergeTrack(const Track &track)
         found = m_trackIndexByPath.value(q.path, -1);
         if (found >= 0) break;
     }
-    if (found < 0) found = m_trackIndexByKey.value(key, -1);
+    const int byId = m_trackIndexById.value(track.id, -1);
+    if (found < 0 && byId >= 0) {
+        const auto &existing = m_tracks[byId];
+        const QStringList incomingOrigins = track.originKeys.isEmpty() ? QStringList{key} : track.originKeys;
+        const QStringList existingOrigins = existing.originKeys.isEmpty() ? QStringList{existing.normalizedKey()} : existing.originKeys;
+        for (const auto &origin : incomingOrigins)
+            if (existingOrigins.contains(origin)) { found = byId; break; }
+    }
+    if (found < 0 && byId < 0) {
+        found = m_trackIndexByKey.value(key, -1);
+        if (found >= 0 && m_tracks[found].albumId != track.albumId
+            && (!m_tracks[found].albumId.isEmpty() || !track.albumId.isEmpty())) found = -1;
+    }
     if (found >= 0 && found < m_tracks.size()) {
         Track &t = m_tracks[found];
+        const QString previousKey = t.normalizedKey();
+        if (t.originKeys.isEmpty()) t.originKeys.append(t.normalizedKey());
+        for (const auto &origin : track.originKeys)
+            if (!t.originKeys.contains(origin)) t.originKeys.append(origin);
         QSet<QString> paths;
         for (const auto &q : t.qualities)
             paths.insert(q.path);
@@ -1832,6 +1887,13 @@ void LibraryManager::mergeTrack(const Track &track)
             t.disc = track.disc;
         if (t.id.isEmpty())
             t.id = stableTrackId(t);
+        const QString updatedKey = t.normalizedKey();
+        if (updatedKey != previousKey) {
+            // An old metadata key must not keep pointing at a different edition.
+            if (m_trackIndexByKey.value(previousKey, -1) == found) m_trackIndexByKey.remove(previousKey);
+            const int previous = m_trackIndexByKey.value(updatedKey, -1);
+            m_trackIndexByKey.insert(updatedKey, previous == -1 || previous == found ? found : -2);
+        }
         return;
     }
 
@@ -1843,7 +1905,8 @@ void LibraryManager::mergeTrack(const Track &track)
     m_trackIndexById.insert(t.id, row);
     for (const auto &q : t.qualities) m_trackIndexByPath.insert(q.path, row);
     m_tracks.push_back(t);
-    m_trackIndexByKey.insert(key, row);
+    if (m_trackIndexByKey.contains(key)) m_trackIndexByKey[key] = -2;
+    else m_trackIndexByKey.insert(key, row);
 }
 
 Track LibraryManager::inferTrackFromAudioFile(const QString &path) const
@@ -1945,17 +2008,19 @@ bool LibraryManager::startOperation(const QString &kind, const QString &url)
     };
     if (!labels.contains(kind)) return false;
     m_busy = true;
+    m_cancelState = (kind == "scan" || kind == "import" || kind == "merge" || kind == "refresh")
+        ? std::make_shared<std::atomic_int>(0) : nullptr;
     m_operation = labels.value(kind);
     setLastMessage(m_operation);
     emit busyChanged();
     const auto snapshot = m_tracks;
     const QString path = m_libraryPath;
     disconnect(&m_job, nullptr, this, nullptr);
-    connect(&m_job, &QFutureWatcher<JobResult>::finished, this, [this] {
+    connect(&m_job, &QFutureWatcher<JobResult>::finished, this, [this, kind] {
         JobResult result = m_job.result();
         if (result.success && result.changed) {
-            m_hasUndo = false;
-            m_undoTracks.clear();
+            m_hasUndo = kind != "load";
+            m_undoTracks = m_hasUndo ? m_tracks : QVector<Track>{};
             emit undoAvailableChanged();
             beginResetModel();
             m_tracks = std::move(result.tracks);
@@ -1965,14 +2030,17 @@ bool LibraryManager::startOperation(const QString &kind, const QString &url)
             emit libraryChanged();
         }
         m_busy = false;
+        m_cancelState.reset();
         m_operation.clear();
         setLastMessage(result.message);
         emit busyChanged();
         emit operationFinished(result.success, result.message);
     });
-    m_job.setFuture(QtConcurrent::run([snapshot, path, kind, url] {
+    const auto cancelState = m_cancelState;
+    m_job.setFuture(QtConcurrent::run([snapshot, path, kind, url, cancelState] {
         // This model is created, used and destroyed exclusively on this worker.
         LibraryManager worker;
+        worker.m_cancelState = cancelState;
         worker.m_tracks = snapshot;
         worker.m_libraryPath = path;
         worker.rebuildTrackIndex();
@@ -1990,6 +2058,41 @@ bool LibraryManager::startOperation(const QString &kind, const QString &url)
         return result;
     }));
     return true;
+}
+
+QString LibraryManager::performOperation(const QString &kind, const QString &url)
+{
+    if (m_busy) return QStringLiteral("曲库任务进行中，请稍候");
+    m_operationSucceeded = false;
+    LibraryManager draft;
+    draft.m_preparing = true;
+    draft.m_cancelState = m_cancelState;
+    draft.m_libraryPath = m_libraryPath;
+    draft.m_tracks = m_tracks;
+    draft.rebuildTrackIndex();
+    QString message;
+    if (kind == "scan") message = draft.scanFolder(url);
+    else if (kind == "import") message = draft.importLibrary(url);
+    else if (kind == "merge") message = draft.mergeLibrary(url);
+    else if (kind == "refresh") message = draft.refreshAlbumMetadata();
+    QString error;
+    if (draft.m_operationSucceeded) {
+        if (commitTracks(std::move(draft.m_tracks), &error)) m_operationSucceeded = true;
+        else message = error;
+    }
+    if (cancelled()) message = QStringLiteral("任务已取消，曲库保持原样；已生成的音频或缓存文件会保留");
+    setLastMessage(message);
+    return message;
+}
+
+void LibraryManager::cancelOperation()
+{
+    if (!m_cancelState || !m_busy) return;
+    int expected = 0;
+    if (m_cancelState->compare_exchange_strong(expected, 1)) {
+        setLastMessage(QStringLiteral("正在取消，等待当前文件处理完成…"));
+        emit busyChanged();
+    }
 }
 
 bool LibraryManager::persist(QString *error)
@@ -2030,6 +2133,7 @@ QString LibraryManager::updateAlbum(const QStringList &ids, const QString &title
     int changed = 0;
     for (auto &track : next) {
         if (!selected.contains(track.id)) continue;
+        if (track.originKeys.isEmpty()) track.originKeys.append(track.normalizedKey());
         track.album = title.trimmed();
         track.albumArtist = artist.trimmed();
         track.albumId = albumId;
@@ -2061,17 +2165,25 @@ bool LibraryManager::replaceAndSave(const QJsonObject &obj, QString *error)
     if (m_busy) { if (error) *error = QStringLiteral("曲库任务进行中"); return false; }
     if (!validateLibrary(obj, error)) return false;
     QVector<Track> tracks;
-    for (const auto &value : obj.value("tracks").toArray()) tracks.append(Track::fromJson(value.toObject()));
+    QSet<QString> ids;
+    for (const auto &value : obj.value("tracks").toArray()) {
+        auto track = Track::fromJson(value.toObject());
+        if (ids.contains(track.id)) { if (error) *error = QStringLiteral("曲库包含重复的自动生成 ID"); return false; }
+        ids.insert(track.id);
+        tracks.append(std::move(track));
+    }
     return commitTracks(std::move(tracks), error);
 }
 
 QString LibraryManager::refreshAlbumMetadata()
 {
+    if (!m_preparing) return performOperation("refresh", {});
     if (m_busy) return QStringLiteral("曲库任务进行中，请稍候");
     m_operationSucceeded = false;
     auto tracks = m_tracks;
     int updated = 0, missing = 0;
     for (auto &track : tracks) {
+        if (cancelled()) { setLastMessage(QStringLiteral("任务已取消")); return m_lastMessage; }
         if (!track.albumId.isEmpty() || !track.albumArtist.isEmpty()) continue;
         const QString path = track.primaryPath();
         if (!QFileInfo(path).isFile()) { ++missing; continue; }

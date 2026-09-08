@@ -9,6 +9,8 @@
 #include <QJsonDocument>
 #include <QStandardPaths>
 #include <QSaveFile>
+#include <QSettings>
+#include <QRandomGenerator>
 #include <QUrl>
 #include <algorithm>
 
@@ -20,13 +22,21 @@ PlaybackQueue::PlaybackQueue(LibraryManager *library, QObject *parent)
     QDir().mkpath(root);
     m_path = QDir(root).filePath("playlists.json");
     loadPlaylists();
+    m_playbackMode = std::clamp(QSettings().value("player/mode", RepeatAll).toInt(), 0, 3);
 
     if (m_library) {
         connect(m_library, &LibraryManager::libraryChanged, this, [this] {
-            const QString current = m_currentIndex >= 0 && m_currentIndex < m_queue.size() ? m_queue[m_currentIndex] : QString();
+            int nextCurrent = -1, retained = 0, nextResume = 0;
+            for (int i = 0; i < m_queue.size(); ++i) {
+                if (m_library->rowOfId(m_queue[i]) < 0) continue;
+                if (i == m_currentIndex) nextCurrent = retained;
+                if (i < (m_currentIndex >= 0 ? m_currentIndex : m_resumeIndex)) ++nextResume;
+                ++retained;
+            }
             beginResetModel();
             m_queue.removeIf( [this](const QString &id) { return m_library->rowOfId(id) < 0; });
-            m_currentIndex = current.isEmpty() ? -1 : m_queue.indexOf(current);
+            m_currentIndex = nextCurrent;
+            m_resumeIndex = nextResume;
             endResetModel();
             emit queueChanged();
             emit currentIndexChanged();
@@ -57,6 +67,7 @@ QVariant PlaybackQueue::data(const QModelIndex &idx, int role) const
     case AlbumRole: return t ? t->album : QString();
     case CoverUrlRole: return t && !t->coverPath.isEmpty() ? QUrl::fromLocalFile(t->coverPath).toString() : QString();
     case ActiveRole: return q == m_currentIndex;
+    case TrackIdRole: return m_queue[q];
     default: return {};
     }
 }
@@ -71,6 +82,7 @@ QHash<int, QByteArray> PlaybackQueue::roleNames() const
         {AlbumRole, "album"},
         {CoverUrlRole, "coverUrl"},
         {ActiveRole, "active"},
+        {TrackIdRole, "trackId"},
     };
 }
 
@@ -133,11 +145,27 @@ int PlaybackQueue::activate(int queueIndex)
     return currentRow();
 }
 
-int PlaybackQueue::next()
+void PlaybackQueue::setPlaybackMode(int mode)
 {
-    if (m_queue.isEmpty())
-        return -1;
-    const int nextIndex = (m_currentIndex + 1 + m_queue.size()) % m_queue.size();
+    if (mode < Sequential || mode > Shuffle || mode == m_playbackMode) return;
+    m_playbackMode = mode;
+    QSettings().setValue("player/mode", mode);
+    emit playbackModeChanged();
+}
+
+int PlaybackQueue::next(bool automatic)
+{
+    if (m_queue.isEmpty()) return -1;
+    if (automatic && m_playbackMode == RepeatOne && m_currentIndex >= 0) return currentRow();
+    int nextIndex = m_currentIndex < 0 ? m_resumeIndex : m_currentIndex + 1;
+    if (m_playbackMode == Shuffle && m_currentIndex >= 0 && m_queue.size() > 1) {
+        nextIndex = QRandomGenerator::global()->bounded(int(m_queue.size()) - 1);
+        if (nextIndex >= m_currentIndex) ++nextIndex;
+    }
+    if (nextIndex >= m_queue.size()) {
+        if (m_playbackMode == Sequential) return -1;
+        nextIndex = 0;
+    }
     setCurrentIndex(nextIndex);
     return currentRow();
 }
@@ -146,7 +174,8 @@ int PlaybackQueue::previous()
 {
     if (m_queue.isEmpty())
         return -1;
-    const int prevIndex = (m_currentIndex <= 0) ? m_queue.size() - 1 : m_currentIndex - 1;
+    const int cursor = m_currentIndex >= 0 ? m_currentIndex : m_resumeIndex;
+    const int prevIndex = cursor <= 0 ? m_queue.size() - 1 : cursor - 1;
     setCurrentIndex(prevIndex);
     return currentRow();
 }
@@ -160,12 +189,12 @@ void PlaybackQueue::removeAt(int queueIndex)
     m_queue.removeAt(queueIndex);
     endRemoveRows();
 
-    if (m_queue.isEmpty())
+    if (queueIndex == m_currentIndex) {
         m_currentIndex = -1;
-    else if (m_currentIndex >= m_queue.size())
-        m_currentIndex = m_queue.size() - 1;
-    else if (queueIndex < m_currentIndex)
-        --m_currentIndex;
+        m_resumeIndex = queueIndex;
+    } else if (queueIndex < m_currentIndex) --m_currentIndex;
+    else if (m_currentIndex < 0 && queueIndex < m_resumeIndex) --m_resumeIndex;
+    if (m_queue.isEmpty()) { m_currentIndex = -1; m_resumeIndex = 0; }
 
     if (!m_queue.isEmpty()) emit dataChanged(index(0), index(m_queue.size()-1), {ActiveRole});
     emit queueChanged();
@@ -177,6 +206,7 @@ void PlaybackQueue::clear()
     beginResetModel();
     m_queue.clear();
     m_currentIndex = -1;
+    m_resumeIndex = 0;
     endResetModel();
     emit queueChanged();
     emit currentIndexChanged();
@@ -247,11 +277,13 @@ QString PlaybackQueue::loadPlaylist(const QString &name, bool replace)
     if (!m_playlists.contains(n))
         return QStringLiteral("歌单不存在：%1").arg(n);
 
-    const QVector<QString> tracks = m_playlists.value(n);
+    QVector<QString> tracks = m_playlists.value(n);
+    const auto missing = tracks.removeIf([this](const QString &id) { return rowForTrackId(id) < 0; });
     if (replace) {
         beginResetModel();
         m_queue = tracks;
-        m_currentIndex = m_queue.isEmpty() ? -1 : 0;
+        m_currentIndex = -1;
+        m_resumeIndex = 0;
         endResetModel();
     } else {
         if (tracks.isEmpty()) {
@@ -266,7 +298,7 @@ QString PlaybackQueue::loadPlaylist(const QString &name, bool replace)
 
     emit queueChanged();
     emit currentIndexChanged();
-    setLastMessage(QStringLiteral("已加载歌单：%1").arg(n));
+    setLastMessage(QStringLiteral("已加载歌单：%1 · %2 首，跳过 %3 首已移除曲目").arg(n).arg(tracks.size()).arg(missing));
     return m_lastMessage;
 }
 

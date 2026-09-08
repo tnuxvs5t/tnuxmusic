@@ -39,6 +39,9 @@ jobs:
       - name: Build
         run: cmake --build build --config Release
 
+      - name: Run regression tests
+        run: ctest --test-dir build --output-on-failure --timeout 120
+
       - name: Package self-contained DEB
         run: bash scripts/package_linux_deb.sh build "$QT_ROOT_DIR" "${{ github.ref_name }}"
 
@@ -153,6 +156,8 @@ jobs:
       - build-windows
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -164,5 +169,7 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           files: release-assets/*
+          name: tnuxmusic ${{ github.ref_name }}
+          body_path: docs/RELEASE_NOTES.md
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}

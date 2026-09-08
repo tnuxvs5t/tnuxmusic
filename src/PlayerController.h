@@ -27,6 +27,7 @@ public:
     Q_INVOKABLE void toggle();
     Q_INVOKABLE void pause();
     Q_INVOKABLE void stop();
+    Q_INVOKABLE void clearSource();
     Q_INVOKABLE void seek(qint64 ms);
     void setVolume(double volume);
 

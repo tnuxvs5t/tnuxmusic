@@ -4,13 +4,15 @@
 
 #include <QFileInfo>
 #include <QUrl>
+#include <QSettings>
 #include <algorithm>
 #include <cmath>
 
 PlayerController::PlayerController(QObject *parent)
     : QObject(parent)
 {
-    m_audio.setVolume(0.75);
+    const double savedVolume = QSettings().value("player/volume", 0.75).toDouble();
+    m_audio.setVolume(std::isfinite(savedVolume) ? std::clamp(savedVolume, 0.0, 1.0) : 0.75);
     m_player.setAudioOutput(&m_audio);
 
     connect(&m_player, &QMediaPlayer::positionChanged, this, &PlayerController::positionChanged);
@@ -90,17 +92,27 @@ void PlayerController::stop()
     m_player.stop();
 }
 
+void PlayerController::clearSource()
+{
+    stop();
+    m_player.setSource({});
+    m_source.clear();
+    emit sourceChanged();
+}
+
 void PlayerController::seek(qint64 ms)
 {
-    m_player.setPosition(ms);
+    m_player.setPosition(std::clamp<qint64>(ms, 0, std::max<qint64>(0, m_player.duration())));
 }
 
 void PlayerController::setVolume(double volume)
 {
+    if (!std::isfinite(volume)) return;
     volume = std::clamp(volume, 0.0, 1.0);
     if (std::abs(static_cast<double>(m_audio.volume()) - volume) < 0.0001)
         return;
     m_audio.setVolume(volume);
+    QSettings().setValue("player/volume", volume);
     emit volumeChanged();
 }
 

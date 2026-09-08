@@ -152,6 +152,7 @@ QJsonObject Track::toJson() const
 {
     QJsonObject obj;
     obj["id"] = id;
+    obj["originKeys"] = QJsonArray::fromStringList(originKeys.isEmpty() ? QStringList{normalizedKey()} : originKeys);
     obj["title"] = title;
     obj["artist"] = artist;
     obj["album"] = album;
@@ -230,6 +231,9 @@ Track Track::fromJson(const QJsonObject &obj, const QString &baseDir)
         if (!q.path.trimmed().isEmpty())
             t.qualities.push_back(q);
     }
+    for (const auto &key : obj.value("originKeys").toArray())
+        if (key.isString() && !key.toString().isEmpty()) t.originKeys.append(key.toString());
+    if (t.originKeys.isEmpty()) t.originKeys.append(t.normalizedKey());
     if (t.id.trimmed().isEmpty())
         t.id = stableTrackId(t);
     return t;

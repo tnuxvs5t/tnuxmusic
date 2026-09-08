@@ -2,6 +2,7 @@
 
 #include <QJsonObject>
 #include <QString>
+#include <QStringList>
 #include <QVariantMap>
 #include <QVector>
 
@@ -20,6 +21,7 @@ struct TrackQuality {
 
 struct Track {
     QString id;
+    QStringList originKeys; // Recording identities retained across manual album edits.
     QString title;
     QString artist;
     QString album;

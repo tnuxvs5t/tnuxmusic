@@ -7,11 +7,14 @@
 #include <QJsonObject>
 #include <QFutureWatcher>
 #include <QSet>
+#include <atomic>
+#include <memory>
 
 class LibraryManager : public QAbstractListModel {
     Q_OBJECT
     Q_PROPERTY(int count READ count NOTIFY libraryChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    Q_PROPERTY(bool canCancel READ canCancel NOTIFY busyChanged)
     Q_PROPERTY(bool canUndoEdit READ canUndoEdit NOTIFY undoAvailableChanged)
     Q_PROPERTY(QString operation READ operation NOTIFY busyChanged)
     Q_PROPERTY(QString libraryPath READ libraryPath NOTIFY libraryPathChanged)
@@ -37,9 +40,12 @@ public:
     };
     Q_ENUM(Roles)
 
-    explicit LibraryManager(QObject *parent = nullptr);
+    explicit LibraryManager(QObject *parent = nullptr, const QString &libraryFile = {});
+    bool operationSucceeded() const { return m_operationSucceeded; }
     ~LibraryManager() override;
     bool busy() const { return m_busy; }
+    bool canCancel() const { return m_busy && m_cancelState && m_cancelState->load() == 0; }
+    Q_INVOKABLE void cancelOperation();
     bool canUndoEdit() const { return m_hasUndo; }
     Q_INVOKABLE QString undoLastEdit();
     QString operation() const { return m_operation; }
@@ -95,6 +101,11 @@ private:
     struct JobResult { QVector<Track> tracks; QString message; bool success = false; bool changed = false; };
     QFutureWatcher<JobResult> m_job;
     bool m_busy = false;
+    bool m_preparing = false;
+    // Shared job state: 0 preparing, 1 cancellation accepted, 2 commit started.
+    std::shared_ptr<std::atomic_int> m_cancelState;
+    bool cancelled() const { return m_cancelState && m_cancelState->load() == 1; }
+    QString performOperation(const QString &kind, const QString &url);
     bool m_hasUndo = false;
     QVector<Track> m_undoTracks;
     bool m_operationSucceeded = false;
