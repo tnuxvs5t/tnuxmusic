@@ -95,7 +95,7 @@ node scripts/merge_import_library.js import.json /path/to/library.json
 
 ## GitHub Release
 
-项目会在打 tag 后自动发布 GitHub Release，常见资产包括：
+项目会在推送与 CMake 版本匹配的 `vX.Y.Z` 标签后，完成 Linux 测试、两平台打包及打包程序验证，再自动发布 GitHub Release。手动分支运行默认只验证；详见 [发布流程](docs/RELEASING.md)。常见资产包括：
 
 - `tnuxmusic-<tag>-linux-amd64.deb`
 - `tnuxmusic-<tag>-windows-x64.zip`

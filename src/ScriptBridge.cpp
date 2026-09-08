@@ -30,8 +30,14 @@ QString ScriptBridge::runScript(const QString &scriptUrl)
     engine.installExtensions(QJSEngine::ConsoleExtension);
 
     const QJsonObject before = m_library->toJsonObject();
-    const QVariant beforeVariant = QJsonDocument(before).toVariant();
-    QJSValue libraryValue = engine.toScriptValue(beforeVariant);
+    // Qt 6.8 exposes nested QVariant collections as wrappers whose mutations
+    // may not survive conversion back. Scripts must receive ordinary JS data.
+    const QJSValue json = engine.globalObject().property("JSON");
+    const QJSValue parse = json.property("parse");
+    const QJSValue stringify = json.property("stringify");
+    QJSValue libraryValue = parse.call({QString::fromUtf8(QJsonDocument(before).toJson(QJsonDocument::Compact))});
+    if (libraryValue.isError())
+        return QStringLiteral("脚本失败：无法准备曲库对象");
     engine.globalObject().setProperty("library", libraryValue);
 
     const QString code = QString::fromUtf8(f.readAll());
@@ -58,7 +64,10 @@ QString ScriptBridge::runScript(const QString &scriptUrl)
     if (!result.isObject())
         result = engine.globalObject().property("library");
 
-    const QJsonDocument doc = QJsonDocument::fromVariant(result.toVariant());
+    const QJSValue serialized = stringify.call({result});
+    if (serialized.isError() || !serialized.isString())
+        return QStringLiteral("脚本失败：产物必须可序列化为 JSON（不能包含循环引用）");
+    const QJsonDocument doc = QJsonDocument::fromJson(serialized.toString().toUtf8());
     if (!doc.isObject())
         return QStringLiteral("脚本失败：脚本必须返回 library 对象，或修改全局 library");
 

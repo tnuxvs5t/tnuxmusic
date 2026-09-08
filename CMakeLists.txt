@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(tnuxmusic VERSION 2.0.0 LANGUAGES CXX)
+project(tnuxmusic VERSION 2.0.1 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 

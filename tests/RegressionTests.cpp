@@ -411,6 +411,30 @@ private slots:
         QVERIFY(model.rowOfId("a")>=0); QVERIFY(model.rowOfId("b")>=0); QCOMPARE(model.trackAt(model.rowOfId("b"))->disc,2);
         QCOMPARE(model.trackAt(model.rowOfId("a"))->title,"Intro");
     }
+    void scriptNestedMutationsAndInvalidOutputs() {
+        QTemporaryDir temp; LibraryManager model; ScriptBridge bridge(&model);
+        QVERIFY(model.replaceFromJsonObject(library({song("a","A","Album","/a.mp3")})));
+        const QString script=temp.filePath("edit.js");
+        writeFile(script, R"JS(function organize(lib) {
+            lib.tracks[0].title = 'Changed';
+            lib.tracks[0].qualities[0].label = 'Edited quality';
+            lib.tracks[0].qualities.push({path: '/second.flac', codec: 'FLAC'});
+            return lib;
+        })JS");
+        QVERIFY(bridge.runScript(script).startsWith("脚本整理完成"));
+        QCOMPARE(model.trackAt(0)->title,"Changed");
+        QCOMPARE(model.trackAt(0)->qualities[0].label,"Edited quality");
+        QCOMPARE(model.trackAt(0)->qualities.size(),2);
+        writeFile(script,"library.tracks[0].title = 'Global mutation';");
+        QVERIFY(bridge.runScript(script).startsWith("脚本整理完成"));
+        QCOMPARE(model.trackAt(0)->title,"Global mutation");
+        const auto before=model.toJsonObject(); const auto disk=readFile(model.libraryPath());
+        for (const auto &code : {"library.circular = library;", "function organize(lib) { return {wrong: true}; }", "throw new Error('bad script');"}) {
+            writeFile(script,code);
+            QVERIFY(!bridge.runScript(script).startsWith("脚本整理完成"));
+            QCOMPARE(model.toJsonObject(),before); QCOMPARE(readFile(model.libraryPath()),disk);
+        }
+    }
     void scaleMeasurements() {
         for (int count : {1000,10000,30000}) {
             LibraryManager model; AlbumModel albums(&model); albums.setAutoMergeAlbums(false); QVector<Track> tracks;
