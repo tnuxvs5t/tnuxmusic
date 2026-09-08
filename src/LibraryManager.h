@@ -3,11 +3,17 @@
 #include "Track.h"
 
 #include <QAbstractListModel>
+#include <QHash>
 #include <QJsonObject>
+#include <QFutureWatcher>
+#include <QSet>
 
 class LibraryManager : public QAbstractListModel {
     Q_OBJECT
     Q_PROPERTY(int count READ count NOTIFY libraryChanged)
+    Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    Q_PROPERTY(bool canUndoEdit READ canUndoEdit NOTIFY undoAvailableChanged)
+    Q_PROPERTY(QString operation READ operation NOTIFY busyChanged)
     Q_PROPERTY(QString libraryPath READ libraryPath NOTIFY libraryPathChanged)
     Q_PROPERTY(QString lastMessage READ lastMessage NOTIFY lastMessageChanged)
     Q_PROPERTY(QString searchQuery READ searchQuery WRITE setSearchQuery NOTIFY searchQueryChanged)
@@ -32,6 +38,14 @@ public:
     Q_ENUM(Roles)
 
     explicit LibraryManager(QObject *parent = nullptr);
+    ~LibraryManager() override;
+    bool busy() const { return m_busy; }
+    bool canUndoEdit() const { return m_hasUndo; }
+    Q_INVOKABLE QString undoLastEdit();
+    QString operation() const { return m_operation; }
+    Q_INVOKABLE bool startOperation(const QString &kind, const QString &url = {});
+    QString updateAlbum(const QStringList &ids, const QString &title, const QString &artist, int year, const QString &albumId);
+    QString removeTracks(const QStringList &ids);
 
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
@@ -48,11 +62,12 @@ public:
 
     Q_INVOKABLE QString loadDefault();
     Q_INVOKABLE QString save();
+    Q_INVOKABLE QString refreshAlbumMetadata();
     Q_INVOKABLE QString scanFolder(const QString &folderUrl);
     Q_INVOKABLE QString importLibrary(const QString &fileUrl);
     Q_INVOKABLE QString mergeLibrary(const QString &fileUrl);
-    Q_INVOKABLE QString exportLibrary(const QString &fileUrl) const;
-    Q_INVOKABLE QString exportLocalizedZip(const QString &fileUrl) const;
+    Q_INVOKABLE QString exportLibrary(const QString &fileUrl);
+    Q_INVOKABLE QString exportLocalizedZip(const QString &fileUrl);
     Q_INVOKABLE QString removeAlbum(const QString &artist, const QString &album);
     Q_INVOKABLE QString clearLibrary();
     Q_INVOKABLE QVariantMap track(int row) const;
@@ -64,16 +79,32 @@ public:
 
     QJsonObject toJsonObject() const;
     bool replaceFromJsonObject(const QJsonObject &obj, QString *error = nullptr, const QString &baseDir = {});
+    bool replaceAndSave(const QJsonObject &obj, QString *error = nullptr);
     bool mergeFromJsonObject(const QJsonObject &obj, QString *error = nullptr, const QString &baseDir = {});
 
 signals:
+    void busyChanged();
+    void undoAvailableChanged();
+    void operationFinished(bool success, const QString &message);
     void libraryChanged();
     void libraryPathChanged();
     void lastMessageChanged();
     void searchQueryChanged();
 
 private:
+    struct JobResult { QVector<Track> tracks; QString message; bool success = false; bool changed = false; };
+    QFutureWatcher<JobResult> m_job;
+    bool m_busy = false;
+    bool m_hasUndo = false;
+    QVector<Track> m_undoTracks;
+    bool m_operationSucceeded = false;
+    QString m_operation;
+    QHash<QString, int> m_trackIndexById;
+    QHash<QString, int> m_trackIndexByPath;
+    bool persist(QString *error);
+    bool commitTracks(QVector<Track> tracks, QString *error);
     QVector<Track> m_tracks;
+    QHash<QString, int> m_trackIndexByKey;
     QVector<int> m_visibleRows;
     QString m_libraryPath;
     QString m_lastMessage;
@@ -85,6 +116,7 @@ private:
     bool readJsonFile(const QString &path, QJsonObject *out, QString *error) const;
     bool readLibrarySource(const QString &path, QJsonObject *out, QString *baseDir, QString *error) const;
     bool writeJsonFile(const QString &path, const QJsonObject &obj, QString *error) const;
+    void rebuildTrackIndex();
     void mergeTrack(const Track &track);
     Track inferTrackFromAudioFile(const QString &path) const;
     void sortTracks();

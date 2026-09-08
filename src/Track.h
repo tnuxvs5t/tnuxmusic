@@ -23,6 +23,8 @@ struct Track {
     QString title;
     QString artist;
     QString album;
+    QString albumArtist;
+    QString albumId; // Explicit user grouping; independent of track artist and cover.
     QString genre;
     QString coverPath;
     QString lyricPath;

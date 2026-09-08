@@ -20,6 +20,7 @@ QString ScriptBridge::runScript(const QString &scriptUrl)
     if (!m_library)
         return QStringLiteral("脚本失败：曲库未连接");
 
+    if (m_library->busy()) return QStringLiteral("曲库任务进行中，请稍候");
     const QString path = canonicalLocalPath(scriptUrl);
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
@@ -62,10 +63,9 @@ QString ScriptBridge::runScript(const QString &scriptUrl)
         return QStringLiteral("脚本失败：脚本必须返回 library 对象，或修改全局 library");
 
     QString error;
-    if (!m_library->replaceFromJsonObject(doc.object(), &error))
+    if (!m_library->replaceAndSave(doc.object(), &error))
         return QStringLiteral("脚本产物无效：%1").arg(error);
 
-    m_library->save();
     return QStringLiteral("脚本整理完成：%1 首").arg(m_library->count());
 }
 

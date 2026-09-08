@@ -12,6 +12,7 @@ set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS
     Core
+    Concurrent
     Gui
     Quick
     QuickControls2
@@ -77,6 +78,7 @@ qt_add_qml_module(tnuxmusic
 
 target_link_libraries(tnuxmusic PRIVATE
     Qt6::Core
+    Qt6::Concurrent
     Qt6::Gui
     Qt6::Quick
     Qt6::QuickControls2
@@ -118,3 +120,20 @@ if(UNIX AND NOT APPLE)
 endif()
 
 include(CPack)
+
+include(CTest)
+if(BUILD_TESTING)
+    find_package(Qt6 REQUIRED COMPONENTS Test)
+    qt_add_executable(tnuxmusic_tests
+        tests/RegressionTests.cpp
+        src/Track.cpp src/LibraryManager.cpp src/AlbumModel.cpp
+        src/MetadataReader.cpp src/NcmImportService.cpp src/PlaybackQueue.cpp
+        src/PlayerController.cpp src/LyricModel.cpp src/TlyParser.cpp src/ScriptBridge.cpp
+    )
+    target_include_directories(tnuxmusic_tests PRIVATE src)
+    target_link_libraries(tnuxmusic_tests PRIVATE Qt6::Test Qt6::Core Qt6::Concurrent
+        Qt6::Gui Qt6::Quick Qt6::QuickControls2 Qt6::Qml Qt6::Multimedia OpenSSL::Crypto)
+    target_compile_definitions(tnuxmusic_tests PRIVATE TNUXMUSIC_QML_FILE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
+    add_test(NAME regression COMMAND tnuxmusic_tests)
+    set_tests_properties(regression PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+endif()

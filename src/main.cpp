@@ -28,7 +28,7 @@ int main(int argc, char *argv[])
         lyrics.setPosition(player.position());
     });
 
-    library.loadDefault();
+
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("libraryManager", &library);
@@ -43,5 +43,6 @@ int main(int argc, char *argv[])
                      Qt::QueuedConnection);
     engine.loadFromModule("TnuxMusic", "Main");
 
+    library.startOperation(QStringLiteral("load"));
     return app.exec();
 }

@@ -180,7 +180,7 @@ NcmImportResult NcmImportService::convertToOpenAudio(const QString &inputPath)
 - `music/...`：当前曲库引用到的音频、封面、歌词资源；
 - ZIP 使用标准 store 条目，系统解压工具可直接读取；
 - 当前实现不使用 ZIP64，超过 4GiB 或超过 65535 条目会返回错误；
-- 导入 / 合并本地化 ZIP 时会解包到应用数据目录，并按解包目录解析 `library.json` 的相对路径，避免音乐和封面路径失效。
+- 导入本地化 ZIP 时会解包到应用数据目录，并按解包目录解析 `library.json` 的相对路径，避免音乐和封面路径失效；合并 ZIP 时只解包当前合并实际需要的新资源，避免重复复制整包。
 
 相关入口：
 

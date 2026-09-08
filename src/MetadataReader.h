@@ -7,6 +7,7 @@ struct AudioMetadata {
     QString title;
     QString artist;
     QString album;
+    QString albumArtist;
     QString genre;
     QString coverMimeType;
     QByteArray coverData;

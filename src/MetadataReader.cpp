@@ -200,8 +200,10 @@ static void applyField(AudioMetadata *meta, const QString &key, const QString &v
 
     if ((key == "TIT2" || key == "TITLE") && meta->title.isEmpty())
         meta->title = value;
-    else if ((key == "TPE1" || key == "ARTIST" || key == "ALBUMARTIST") && meta->artist.isEmpty())
+    else if ((key == "TPE1" || key == "ARTIST") && meta->artist.isEmpty())
         meta->artist = value;
+    else if ((key == "TPE2" || key == "ALBUMARTIST" || key == "ALBUM ARTIST" || key == "TP2") && meta->albumArtist.isEmpty())
+        meta->albumArtist = value;
     else if ((key == "TALB" || key == "ALBUM") && meta->album.isEmpty())
         meta->album = value;
     else if ((key == "TCON" || key == "GENRE") && meta->genre.isEmpty())
@@ -214,7 +216,7 @@ static void applyField(AudioMetadata *meta, const QString &key, const QString &v
         meta->year = firstYear(value);
     else if (key == "TT2" && meta->title.isEmpty())
         meta->title = value;
-    else if ((key == "TP1" || key == "TP2") && meta->artist.isEmpty())
+    else if ((key == "TP1") && meta->artist.isEmpty())
         meta->artist = value;
     else if (key == "TAL" && meta->album.isEmpty())
         meta->album = value;

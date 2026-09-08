@@ -27,6 +27,9 @@ QString canonicalLocalPath(const QString &pathOrUrl, const QString &baseDir)
     if (url.isValid() && url.isLocalFile())
         s = url.toLocalFile();
 
+    // Resolve portable library paths against the manifest before the CWD.
+    if (!QFileInfo(s).isAbsolute() && !baseDir.trimmed().isEmpty())
+        s = QDir(baseDir).filePath(s);
     QFileInfo info(s);
     if (info.exists())
         return info.canonicalFilePath();
@@ -53,7 +56,7 @@ QString fileUrlFromPath(const QString &path)
 {
     if (path.trimmed().isEmpty())
         return {};
-    return QUrl::fromLocalFile(canonicalLocalPath(path)).toString();
+    return QUrl::fromLocalFile(path).toString();
 }
 
 QJsonObject TrackQuality::toJson() const
@@ -127,8 +130,9 @@ QString Track::normalizedKey() const
     QString b = trimmedLower(album);
     QString c = trimmedLower(displayTitle());
     if (a.isEmpty() && b.isEmpty())
-        return QStringLiteral("path:%1").arg(trimmedLower(primaryPath()));
-    return QStringLiteral("%1\001%2\001%3").arg(a, b, c);
+        return QStringLiteral("path:%1").arg(primaryPath());
+    return QStringLiteral("%1\001%2\001%3\001%4\001%5\001%6")
+        .arg(a, b, c).arg(disc).arg(trackNo).arg(year);
 }
 
 QString Track::qualitiesText() const
@@ -151,6 +155,8 @@ QJsonObject Track::toJson() const
     obj["title"] = title;
     obj["artist"] = artist;
     obj["album"] = album;
+    if (!albumArtist.isEmpty()) obj["albumArtist"] = albumArtist;
+    if (!albumId.isEmpty()) obj["albumId"] = albumId;
     obj["genre"] = genre;
     obj["cover"] = coverPath;
     obj["lyrics"] = lyricPath;
@@ -179,6 +185,8 @@ QVariantMap Track::toVariantMap() const
         {"title", displayTitle()},
         {"artist", artist},
         {"album", album},
+        {"albumArtist", albumArtist},
+        {"albumId", albumId},
         {"genre", genre},
         {"cover", coverPath},
         {"coverUrl", fileUrlFromPath(coverPath)},
@@ -207,6 +215,8 @@ Track Track::fromJson(const QJsonObject &obj, const QString &baseDir)
     t.title = obj.value("title").toString();
     t.artist = obj.value("artist").toString();
     t.album = obj.value("album").toString();
+    t.albumArtist = obj.value("albumArtist").toString();
+    t.albumId = obj.value("albumId").toString();
     t.genre = obj.value("genre").toString();
     t.coverPath = canonicalLocalPath(obj.value("cover").toString(), baseDir);
     t.lyricPath = canonicalLocalPath(obj.value("lyrics").toString(), baseDir);

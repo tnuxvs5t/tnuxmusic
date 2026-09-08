@@ -8,6 +8,9 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QStandardPaths>
+#include <QSaveFile>
+#include <QUrl>
+#include <algorithm>
 
 PlaybackQueue::PlaybackQueue(LibraryManager *library, QObject *parent)
     : QAbstractListModel(parent)
@@ -20,8 +23,12 @@ PlaybackQueue::PlaybackQueue(LibraryManager *library, QObject *parent)
 
     if (m_library) {
         connect(m_library, &LibraryManager::libraryChanged, this, [this] {
-            if (!m_queue.isEmpty())
-                emit dataChanged(index(0), index(m_queue.size() - 1));
+            const QString current = m_currentIndex >= 0 && m_currentIndex < m_queue.size() ? m_queue[m_currentIndex] : QString();
+            beginResetModel();
+            m_queue.removeIf( [this](const QString &id) { return m_library->rowOfId(id) < 0; });
+            m_currentIndex = current.isEmpty() ? -1 : m_queue.indexOf(current);
+            endResetModel();
+            emit queueChanged();
             emit currentIndexChanged();
         });
     }
@@ -41,14 +48,14 @@ QVariant PlaybackQueue::data(const QModelIndex &idx, int role) const
 
     const int q = idx.row();
     const int row = rowForTrackId(m_queue[q]);
-    const QVariantMap t = m_library->track(row);
+    const Track *t = m_library->trackAt(row);
     switch (role) {
     case QueueIndexRole: return q;
     case LibraryRowRole: return row;
-    case TitleRole: return t.value("title");
-    case ArtistRole: return t.value("artist");
-    case AlbumRole: return t.value("album");
-    case CoverUrlRole: return t.value("coverUrl");
+    case TitleRole: return t ? t->displayTitle() : QStringLiteral("曲目已不在曲库中");
+    case ArtistRole: return t ? t->artist : QString();
+    case AlbumRole: return t ? t->album : QString();
+    case CoverUrlRole: return t && !t->coverPath.isEmpty() ? QUrl::fromLocalFile(t->coverPath).toString() : QString();
     case ActiveRole: return q == m_currentIndex;
     default: return {};
     }
@@ -160,6 +167,7 @@ void PlaybackQueue::removeAt(int queueIndex)
     else if (queueIndex < m_currentIndex)
         --m_currentIndex;
 
+    if (!m_queue.isEmpty()) emit dataChanged(index(0), index(m_queue.size()-1), {ActiveRole});
     emit queueChanged();
     emit currentIndexChanged();
 }
@@ -177,12 +185,13 @@ void PlaybackQueue::clear()
 
 QString PlaybackQueue::createPlaylist(const QString &name)
 {
+    const auto previous = m_playlists;
     const QString n = name.simplified();
     if (n.isEmpty())
         return QStringLiteral("歌单名不能为空");
     if (!m_playlists.contains(n))
         m_playlists.insert(n, {});
-    savePlaylists();
+    if (!savePlaylists()) { m_playlists = previous; return m_lastMessage; }
     emit playlistsChanged();
     setLastMessage(QStringLiteral("已创建歌单：%1").arg(n));
     return m_lastMessage;
@@ -190,10 +199,11 @@ QString PlaybackQueue::createPlaylist(const QString &name)
 
 QString PlaybackQueue::deletePlaylist(const QString &name)
 {
+    const auto previous = m_playlists;
     const QString n = name.simplified();
     if (!m_playlists.remove(n))
         return QStringLiteral("歌单不存在：%1").arg(n);
-    savePlaylists();
+    if (!savePlaylists()) { m_playlists = previous; return m_lastMessage; }
     emit playlistsChanged();
     setLastMessage(QStringLiteral("已删除歌单：%1").arg(n));
     return m_lastMessage;
@@ -201,6 +211,7 @@ QString PlaybackQueue::deletePlaylist(const QString &name)
 
 QString PlaybackQueue::addRowToPlaylist(const QString &name, int libraryRow)
 {
+    const auto previous = m_playlists;
     const QString n = name.simplified();
     const QString id = trackIdForRow(libraryRow);
     if (n.isEmpty())
@@ -211,7 +222,7 @@ QString PlaybackQueue::addRowToPlaylist(const QString &name, int libraryRow)
     auto &tracks = m_playlists[n];
     if (!tracks.contains(id))
         tracks.push_back(id);
-    savePlaylists();
+    if (!savePlaylists()) { m_playlists = previous; return m_lastMessage; }
     emit playlistsChanged();
     setLastMessage(QStringLiteral("已加入歌单：%1").arg(n));
     return m_lastMessage;
@@ -219,11 +230,12 @@ QString PlaybackQueue::addRowToPlaylist(const QString &name, int libraryRow)
 
 QString PlaybackQueue::saveQueueAsPlaylist(const QString &name)
 {
+    const auto previous = m_playlists;
     const QString n = name.simplified();
     if (n.isEmpty())
         return QStringLiteral("歌单名不能为空");
     m_playlists[n] = m_queue;
-    savePlaylists();
+    if (!savePlaylists()) { m_playlists = previous; return m_lastMessage; }
     emit playlistsChanged();
     setLastMessage(QStringLiteral("已保存队列为歌单：%1").arg(n));
     return m_lastMessage;
@@ -306,12 +318,31 @@ void PlaybackQueue::loadPlaylists()
         replaceFromJsonObject(doc.object());
 }
 
-void PlaybackQueue::savePlaylists()
+bool PlaybackQueue::savePlaylists()
 {
-    QFile f(m_path);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        return;
-    f.write(QJsonDocument(toJsonObject()).toJson(QJsonDocument::Indented));
+    QSaveFile file(m_path);
+    const auto bytes = QJsonDocument(toJsonObject()).toJson(QJsonDocument::Indented);
+    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
+        setLastMessage(QStringLiteral("歌单保存失败：%1").arg(file.errorString()));
+        return false;
+    }
+    return true;
+}
+
+int PlaybackQueue::enqueueRows(const QVariantList &rows)
+{
+    QVector<QString> ids;
+    for (const auto &row : rows) {
+        const QString id = trackIdForRow(row.toInt());
+        if (!id.isEmpty()) ids.append(id);
+    }
+    if (ids.isEmpty()) return 0;
+    const int first = m_queue.size();
+    beginInsertRows({}, first, first + ids.size() - 1);
+    m_queue += ids;
+    endInsertRows();
+    emit queueChanged();
+    return ids.size();
 }
 
 QJsonObject PlaybackQueue::toJsonObject() const

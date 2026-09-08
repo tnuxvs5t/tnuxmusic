@@ -39,6 +39,7 @@ public:
     QString lastMessage() const { return m_lastMessage; }
 
     Q_INVOKABLE int enqueueRow(int libraryRow);
+    Q_INVOKABLE int enqueueRows(const QVariantList &rows);
     Q_INVOKABLE int playNowRow(int libraryRow);
     Q_INVOKABLE int activate(int queueIndex);
     Q_INVOKABLE int next();
@@ -71,7 +72,7 @@ private:
     void setCurrentIndex(int index);
     void setLastMessage(const QString &message);
     void loadPlaylists();
-    void savePlaylists();
+    bool savePlaylists();
     QJsonObject toJsonObject() const;
     void replaceFromJsonObject(const QJsonObject &obj);
 };
